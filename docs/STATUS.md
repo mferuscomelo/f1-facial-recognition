@@ -1,4 +1,4 @@
-# Status (paused 2026-11-10 23:10 CET)
+# Status (updated 2026-11-11 00:25 CET)
 
 ## main
 - Stage 0 done & accepted on hardware.
@@ -18,3 +18,15 @@
 - Ask SG Wireless: does J202 supply 5 V in USB host mode, and how much current?
 - User: choose TLS backend (HTTPS vs MQTT) — deferred. Final Edge Impulse project — deferred.
 - Later: UART 921600 (AT+IPR=921600,0) like SG.
+
+## 2026-11-11 update
+- LTE branch (CMUX) merged + verified on HW: Cat-M1 confirmed (AT+SQNMODEACTIVE), boot POST on 1st attempt, 30 s health polls.
+- Camera branch merged. J202 DOES supply VBUS (Logitech 046d:0829, bMaxPower 500 mA, streams).
+- Root cause of "0 frames": S3 default USB FIFO split limits ISOC MPS to 596 B; driver fell back to the
+  camera's 512 B alt while it committed 800 B payloads -> pipe halted. Fix: custom FIFO split
+  (rx 184 lines) + vendored usb_host_uvc with MAX_MPS_IN 724 -> camera uses its 700 B alt.
+- Stage 3 acceptance met: ~7.4 fps decoded (decode ~50 ms + resize 6 ms), lens-cover changes mean
+  brightness (55 -> 30), 3 hot-plug cycles OK, internal heap stable, UART console unaffected.
+- A second camera (YUY2-only 160x120, single alt MPS 956) cannot work on ESP32-S3 (FIFO max ~724).
+- webhook.site inbox appears full ("Incomplete chunked data") -> new URL needed.
+- Next: wire Stage 2 inference (branch worktree-agent-a3741b1438b28039e) to camera frames.
