@@ -43,17 +43,17 @@ extern "C" void app_main() {
         const TickType_t now = xTaskGetTickCount();
         if (up && (first || now - last_pub >= pdMS_TO_TICKS(CONFIG_APP_PUBLISH_PERIOD_S * 1000))) {
             const auto inf = lte::info();
-            char json[256];
+            char json[320];
             snprintf(json, sizeof(json),
-                     "{\"device\":\"f1\",\"event\":\"%s\",\"uptime_s\":%lu,\"rssi\":%d,\"act\":%d,"
-                     "\"heap_int\":%u,\"heap_int_min\":%u,\"heap_psram\":%u}",
+                     "{\"device\":\"f1\",\"event\":\"%s\",\"uptime_s\":%lu,\"rssi\":%d,\"rat\":\"%s\","
+                     "\"reconnects\":%u,\"pub_fail\":%u,\"heap_int\":%u,\"heap_int_min\":%u,\"heap_psram\":%u}",
                      first ? "boot" : "heartbeat", (unsigned long)(now / configTICK_RATE_HZ), inf.rssi,
-                     inf.act, heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     inf.rat, inf.reconnects, inf.publish_fail, heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
                      heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-            lte::publish(json);
+            // Non-blocking; the boot event is must-deliver (retried by lte_pub until a 2xx).
+            if (lte::publish_async(json, /*must_deliver=*/first)) first = false;
             last_pub = now;
-            first = false;
         }
         vTaskDelay(pdMS_TO_TICKS(500));
     }

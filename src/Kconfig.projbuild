@@ -4,6 +4,29 @@ config APP_ENABLE_LTE
     bool "Enable LTE-M (Stage 1)"
     default y
 
+choice APP_LTE_MODE
+    prompt "Modem link mode"
+    default APP_LTE_MODE_CMUX
+    depends on APP_ENABLE_LTE
+    help
+        CMUX (what the SG SDK uses) multiplexes AT commands and PPP data on one UART, so
+        signal/registration can be monitored while online. Plain PPP is the fallback that
+        was verified first on hardware; AT commands are unavailable while it is up.
+
+config APP_LTE_MODE_CMUX
+    bool "CMUX (AT + PPP simultaneously)"
+
+config APP_LTE_MODE_PPP
+    bool "Plain PPP (no AT while online)"
+
+endchoice
+
+config APP_LTE_HEALTH_PERIOD_S
+    int "CMUX health-check period (CSQ + CEREG), seconds"
+    default 30
+    range 5 3600
+    depends on APP_LTE_MODE_CMUX
+
 config APP_LTE_APN
     string "Primary APN"
     default "iot.1nce.net"
