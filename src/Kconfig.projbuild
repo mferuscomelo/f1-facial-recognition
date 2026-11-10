@@ -1,0 +1,19 @@
+menu "F1 facecam application"
+
+config APP_ENABLE_LTE
+    bool "Enable LTE-M (Stage 1)"
+    default n
+
+config APP_ENABLE_INFERENCE
+    bool "Enable Edge Impulse inference (Stage 2)"
+    default n
+
+config APP_ENABLE_CAMERA
+    bool "Enable USB UVC camera (Stage 3)"
+    default n
+
+config APP_HEAP_LOG_PERIOD_S
+    int "Heap telemetry period (seconds)"
+    default 10
+
+endmenu
