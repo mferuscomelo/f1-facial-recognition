@@ -139,6 +139,7 @@ std::atomic<uint32_t> s_rx{0}, s_dropped{0}, s_too_big{0}, s_decoded{0}, s_dec_e
     s_connects{0}, s_disconnects{0};
 uint16_t s_stream_w = 0, s_stream_h = 0;
 float s_stream_fps = 0;
+enum uvc_host_stream_format s_stream_fmt = UVC_VS_FORMAT_MJPEG;  // set before stream start
 
 // ------------------------------------------------------------------ UVC callbacks
 // Runs in the UVC driver task. Never blocks: copy into the slot if the decoder is idle, else drop.
@@ -206,13 +207,23 @@ void driver_event_cb(const uvc_host_driver_event_data_t* event, void* /*user_ctx
 // ------------------------------------------------------------------ format selection
 // Exact requested MJPEG size if offered; else the MJPEG format <= 640x480 closest in pixel count,
 // preferring formats at least as large as the model input.
+// If the camera has no MJPEG, fall back to uncompressed YUY2 small enough for the frame slot
+// (the Y bytes are used directly as grayscale - no JPEG decode needed).
+bool pick_format_of(const uvc_host_frame_info_t* list, size_t n, enum uvc_host_stream_format fmt,
+                    const uvc_host_frame_info_t** out);
 bool pick_format(const uvc_host_frame_info_t* list, size_t n, const uvc_host_frame_info_t** out) {
+    return pick_format_of(list, n, UVC_VS_FORMAT_MJPEG, out) ||
+           pick_format_of(list, n, UVC_VS_FORMAT_YUY2, out);
+}
+bool pick_format_of(const uvc_host_frame_info_t* list, size_t n, enum uvc_host_stream_format fmt,
+                    const uvc_host_frame_info_t** out) {
     const long req_area = long(CONFIG_APP_CAMERA_REQ_WIDTH) * CONFIG_APP_CAMERA_REQ_HEIGHT;
     const uvc_host_frame_info_t* best = nullptr;
     long best_score = 0;
     for (size_t i = 0; i < n; ++i) {
         const auto& f = list[i];
-        if (f.format != UVC_VS_FORMAT_MJPEG || f.h_res > kMaxW || f.v_res > kMaxH) continue;
+        if (f.format != fmt || f.h_res > kMaxW || f.v_res > kMaxH) continue;
+        if (fmt == UVC_VS_FORMAT_YUY2 && size_t(f.h_res) * f.v_res * 2 > kJpegSlotSize) continue;
         if (f.h_res == CONFIG_APP_CAMERA_REQ_WIDTH && f.v_res == CONFIG_APP_CAMERA_REQ_HEIGHT) {
             *out = &f;
             return true;
@@ -299,11 +310,13 @@ void open_stream(const Event& ev) {
 
     const uvc_host_frame_info_t* f = nullptr;
     if (!pick_format(list, n, &f)) {
-        ESP_LOGE(TAG, "no MJPEG format <= %ux%u: camera not usable (need UVC + MJPEG)", kMaxW, kMaxH);
+        ESP_LOGE(TAG, "no MJPEG or small-enough YUY2 format <= %ux%u: camera not usable", kMaxW, kMaxH);
         heap_caps_free(list);
         return;
     }
     const unsigned w = f->h_res, h = f->v_res;
+    const auto fmt = static_cast<enum uvc_host_stream_format>(f->format);
+    const bool yuy2 = fmt == UVC_VS_FORMAT_YUY2;
     const float fps = pick_fps(*f);
     heap_caps_free(list);
 
@@ -318,15 +331,16 @@ void open_stream(const Event& ev) {
     cfg.vs_format.h_res = w;
     cfg.vs_format.v_res = h;
     cfg.vs_format.fps = fps;
-    cfg.vs_format.format = UVC_VS_FORMAT_MJPEG;
+    cfg.vs_format.format = fmt;
     cfg.advanced.number_of_frame_buffers = CONFIG_APP_CAMERA_FRAME_BUFFERS;
-    cfg.advanced.frame_size = estimate_jpeg_size(w, h);
+    cfg.advanced.frame_size = yuy2 ? size_t(w) * h * 2 : estimate_jpeg_size(w, h);
     cfg.advanced.frame_heap_caps = MALLOC_CAP_SPIRAM;  // frame buffers in PSRAM (driver memcpy's into them)
     cfg.advanced.number_of_urbs = CONFIG_APP_CAMERA_URB_COUNT;  // URB buffers: internal DMA RAM (IDF usb_private.c)
     cfg.advanced.urb_size = CONFIG_APP_CAMERA_URB_SIZE;
     cfg.advanced.user_frame_buffers = nullptr;
 
-    ESP_LOGI(TAG, "opening MJPEG %ux%u @ %.1f fps (frame buf %u B x %d in PSRAM)", w, h, fps,
+    s_stream_fmt = fmt;
+    ESP_LOGI(TAG, "opening %s %ux%u @ %.1f fps (frame buf %u B x %d in PSRAM)", format_name(fmt), w, h, fps,
              unsigned(cfg.advanced.frame_size), cfg.advanced.number_of_frame_buffers);
     const size_t int_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     uvc_host_stream_hdl_t stream = nullptr;
@@ -398,6 +412,13 @@ void usb_lib_task(void* arg) {
     usb_host_config_t host_config = {};
     host_config.skip_phy_setup = false;  // internal PHY on GPIO19/20 -> J202
     host_config.intr_flags = ESP_INTR_FLAG_LOWMED;
+    // Custom FIFO split (IDF 5.5 usb_host.h fifo_settings_custom). S3 FIFO = 200 lines (800 B); the
+    // BIAS_IN default (hcd_dwc.c _calculate_fifo_from_bias) is nptx 16 / ptx 32 / rx 152 (608 B).
+    // We never send periodic OUT, so give ptx's 32 lines to RX: rx 184 lines = 736 B, which allows
+    // ISOC IN MPS up to ~724 B (vendored usb_host_uvc MAX_MPS_IN) - enough for 700-byte alt settings.
+    host_config.fifo_settings_custom.nptx_fifo_lines = 16;
+    host_config.fifo_settings_custom.ptx_fifo_lines = 0;
+    host_config.fifo_settings_custom.rx_fifo_lines = 184;
     a->result = usb_host_install(&host_config);
     xSemaphoreGive(a->done);
     if (a->result != ESP_OK) {
@@ -460,6 +481,30 @@ void crop_resize_gray(const uint8_t* rgb, unsigned sw, unsigned sh, uint8_t* out
     }
 }
 
+// Same crop + box filter as above, but from YUY2 (Y0 U Y1 V): luma is every even byte.
+void crop_resize_gray_yuy2(const uint8_t* yuy2, unsigned sw, unsigned sh, uint8_t* out) {
+    unsigned cw = sw, ch = sh;
+    if (uint64_t(sw) * kModelH > uint64_t(sh) * kModelW) cw = unsigned(uint64_t(sh) * kModelW / kModelH);
+    else ch = unsigned(uint64_t(sw) * kModelH / kModelW);
+    const unsigned x_off = (sw - cw) / 2, y_off = (sh - ch) / 2;
+    for (unsigned oy = 0; oy < kModelH; ++oy) {
+        unsigned y0 = y_off + oy * ch / kModelH;
+        unsigned y1 = y_off + (oy + 1) * ch / kModelH;
+        if (y1 <= y0) y1 = y0 + 1;
+        for (unsigned ox = 0; ox < kModelW; ++ox) {
+            unsigned x0 = x_off + ox * cw / kModelW;
+            unsigned x1 = x_off + (ox + 1) * cw / kModelW;
+            if (x1 <= x0) x1 = x0 + 1;
+            uint32_t acc = 0;
+            for (unsigned y = y0; y < y1; ++y) {
+                const uint8_t* p = yuy2 + (size_t(y) * sw + x0) * 2;
+                for (unsigned x = x0; x < x1; ++x, p += 2) acc += *p;
+            }
+            out[size_t(oy) * kModelW + ox] = uint8_t(acc / ((y1 - y0) * (x1 - x0)));
+        }
+    }
+}
+
 bool ensure_rgb(size_t need) {
     if (need <= s_rgb_cap) return true;
     heap_caps_free(s_rgb);
@@ -479,6 +524,29 @@ void decode_task(void*) {
         fi.jpeg_bytes = s_jpeg_len;
         fi.width = kModelW;
         fi.height = kModelH;
+
+        if (s_stream_fmt == UVC_VS_FORMAT_YUY2) {
+            const unsigned sw = s_stream_w, sh = s_stream_h;
+            fi.src_width = sw;
+            fi.src_height = sh;
+            const bool ok = sw && sh && s_jpeg_len >= size_t(sw) * sh * 2;
+            const int64_t t0 = esp_timer_get_time();
+            if (ok) crop_resize_gray_yuy2(s_jpeg, sw, sh, s_gray_work);
+            fi.resize_us = uint32_t(esp_timer_get_time() - t0);
+            s_slot_busy.store(false, std::memory_order_release);
+            if (!ok) {
+                s_dec_err.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            fi.seq = s_decoded.fetch_add(1, std::memory_order_relaxed) + 1;
+            xSemaphoreTake(s_latest_mutex, portMAX_DELAY);
+            memcpy(s_gray_latest, s_gray_work, kModelBytes);
+            s_latest_info = fi;
+            xSemaphoreGive(s_latest_mutex);
+            xSemaphoreGive(s_new_frame);
+            if (s_cb) s_cb(s_gray_work, fi, s_cb_ctx);
+            continue;
+        }
 
         esp_jpeg_image_cfg_t jcfg = {};
         jcfg.indata = s_jpeg;
