@@ -2,7 +2,34 @@ menu "F1 facecam application"
 
 config APP_ENABLE_LTE
     bool "Enable LTE-M (Stage 1)"
-    default n
+    default y
+
+config APP_LTE_APN
+    string "Primary APN"
+    default "iot.1nce.net"
+    depends on APP_ENABLE_LTE
+    help
+        Verified on hardware 2026-11-10: kit SIM attaches with iot.1nce.net (Platform 1.0); sensor.net never registered.
+
+config APP_LTE_APN_FALLBACK
+    string "Fallback APN (empty = none)"
+    default "sensor.net"
+    depends on APP_ENABLE_LTE
+
+config APP_LTE_ATTACH_TIMEOUT_S
+    int "Seconds to wait for network registration per APN"
+    default 180
+    depends on APP_ENABLE_LTE
+
+config APP_PUBLISH_URL
+    string "HTTP endpoint for JSON events (keep in sdkconfig.defaults.local)"
+    default ""
+    depends on APP_ENABLE_LTE
+
+config APP_PUBLISH_PERIOD_S
+    int "Boot/heartbeat event period (seconds)"
+    default 60
+    depends on APP_ENABLE_LTE
 
 config APP_ENABLE_INFERENCE
     bool "Enable Edge Impulse inference (Stage 2)"
