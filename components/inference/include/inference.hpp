@@ -32,4 +32,8 @@ void set_arena_policy(ArenaPolicy p);
 // 8-bit grayscale frame of exactly input_width() x input_height() (resizing is the caller's job).
 Result run(const uint8_t* gray, int w, int h);
 
+// Runs the model on built-in public-domain test images (components/inference/test_images.h) and
+// logs the results. Returns true if the face images produce a box and the no-face image does not.
+bool self_test();
+
 }  // namespace inference

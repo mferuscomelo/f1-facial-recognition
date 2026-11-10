@@ -9,6 +9,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_memory_utils.h"
+#include "test_images.h"
 
 static const char* TAG = "inference";
 
@@ -121,6 +122,29 @@ Result run(const uint8_t* gray, int w, int h) {
     }
 #endif
     return r;
+}
+
+bool self_test() {
+    struct Case { const char* name; const uint8_t* img; bool expect_face; };
+    const Case cases[] = {
+        {"astronaut_face", testimg::astronaut_face, true},
+        {"astronaut_full", testimg::astronaut_full, true},
+        {"coffee", testimg::coffee, false},
+    };
+    bool all_ok = true;
+    for (const auto& c : cases) {
+        const Result r = run(c.img, EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT);
+        const bool face = !r.boxes.empty();
+        const bool ok = r.err == 0 && face == c.expect_face;
+        all_ok &= ok;
+        ESP_LOGI(TAG, "self-test %-15s: %s | err %d, %u boxes, best %.2f, dsp %d ms, inf %d ms", c.name,
+                 ok ? "PASS" : "FAIL", r.err, unsigned(r.boxes.size()), r.confidence, r.dsp_ms, r.inference_ms);
+        for (const auto& b : r.boxes)
+            ESP_LOGI(TAG, "    box '%s' %.2f at x=%lu y=%lu w=%lu h=%lu", b.label.c_str(), b.value,
+                     (unsigned long)b.x, (unsigned long)b.y, (unsigned long)b.w, (unsigned long)b.h);
+    }
+    ESP_LOGI(TAG, "self-test %s", all_ok ? "PASSED" : "FAILED");
+    return all_ok;
 }
 
 }  // namespace inference

@@ -38,6 +38,7 @@ static void inference_task(void*) {
         vTaskDelete(nullptr);
         return;
     }
+    inference::self_test();  // known images first: separates model problems from camera problems
     const int w = camera::model_width(), h = camera::model_height();
     if (w != inference::input_width() || h != inference::input_height()) {
         ESP_LOGE(TAG, "camera model size %dx%d != model input %dx%d", w, h, inference::input_width(),
