@@ -30,3 +30,9 @@
 - A second camera (YUY2-only 160x120, single alt MPS 956) cannot work on ESP32-S3 (FIFO max ~724).
 - webhook.site inbox appears full ("Incomplete chunked data") -> new URL needed.
 - Next: wire Stage 2 inference (branch worktree-agent-a3741b1438b28039e) to camera frames.
+
+## 2026-11-11 00:50 — inference wired
+- Camera -> EI FOMO on core 1, ~3 inferences/s (~240 ms, ESP-NN S3, arena in PSRAM), debounced face/no_face events via LTE.
+- Fixed ESP-NN heap corruption (16-byte aligned/padded ei_calloc/ei_malloc).
+- Boot self-test on public-domain images: pipeline localises faces correctly, but the stand-in (colour, unlicensed) model only scores 0.11–0.32 (< 0.5 threshold) -> no events yet.
+- End-to-end blockers: (1) new webhook.site URL (inbox full), (2) better model: clone public grayscale "Face detection - FOMO" project and export C++ library zip (needs user's EI login).
