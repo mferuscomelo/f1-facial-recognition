@@ -38,6 +38,77 @@ config APP_ENABLE_INFERENCE
 config APP_ENABLE_CAMERA
     bool "Enable USB UVC camera (Stage 3)"
     default n
+    help
+        USB host on the bottom USB-C (J202) + espressif/usb_host_uvc + espressif/esp_jpeg.
+        See components/camera/README.md.
+
+if APP_ENABLE_CAMERA
+
+config APP_CAMERA_REQ_WIDTH
+    int "Requested MJPEG width"
+    default 320
+    range 64 640
+    help
+        If the camera has no MJPEG format of exactly this size, the closest MJPEG format
+        <= 640x480 is used (ESP32-S3 USB is Full-Speed only, ~1 MB/s isochronous).
+
+config APP_CAMERA_REQ_HEIGHT
+    int "Requested MJPEG height"
+    default 240
+    range 48 480
+
+config APP_CAMERA_REQ_FPS
+    int "Requested frame rate (0 = camera default)"
+    default 15
+    range 0 30
+    help
+        Snapped to the nearest frame interval the camera advertises for the chosen format.
+
+config APP_CAMERA_MODEL_WIDTH
+    int "Model input width (grayscale output)"
+    default 96
+    range 8 640
+
+config APP_CAMERA_MODEL_HEIGHT
+    int "Model input height (grayscale output)"
+    default 96
+    range 8 480
+
+config APP_CAMERA_FRAME_BUFFERS
+    int "UVC driver frame buffers (PSRAM)"
+    default 3
+    range 2 8
+
+config APP_CAMERA_URB_COUNT
+    int "Number of USB transfers (URBs) for the video stream"
+    default 3
+    range 2 8
+    help
+        URB data buffers must be DMA-capable INTERNAL RAM on the ESP32-S3 (USB DWC DMA cannot
+        reach PSRAM on this chip). Internal cost ~= URB_COUNT * URB_SIZE (rounded up to the
+        endpoint max packet size).
+
+config APP_CAMERA_URB_SIZE
+    int "Size of one URB in bytes (0 = driver default, 4 x MPS)"
+    default 4096
+    range 0 16384
+
+config APP_CAMERA_PRINT_DESCRIPTORS
+    bool "Print the camera's full USB descriptors on connect"
+    default y
+
+config APP_CAMERA_TASK_CORE
+    int "Core for USB/UVC/decode tasks"
+    default 1
+    range 0 1
+    help
+        Stage 4 plan: core 1 = camera + inference, core 0 = LTE.
+
+config APP_CAMERA_STATS_PERIOD_S
+    int "Camera statistics log period in seconds (main.cpp hook)"
+    default 5
+
+endif
 
 config APP_HEAP_LOG_PERIOD_S
     int "Heap telemetry period (seconds)"
