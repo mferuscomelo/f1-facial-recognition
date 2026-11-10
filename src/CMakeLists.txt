@@ -1,3 +1,3 @@
 idf_component_register(SRCS "main.cpp"
                        INCLUDE_DIRS "."
-                       REQUIRES board lte camera esp_timer)
+                       REQUIRES board lte camera inference esp_timer)
