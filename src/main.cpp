@@ -17,10 +17,103 @@
 #include "camera.hpp"
 #include "esp_timer.h"
 #endif
+#if CONFIG_APP_ENABLE_INFERENCE
+#include <atomic>
+#include "inference.hpp"
+#endif
 
 static const char* TAG = "app";
 
-#if CONFIG_APP_ENABLE_CAMERA
+#if CONFIG_APP_ENABLE_CAMERA && CONFIG_APP_ENABLE_INFERENCE
+static std::atomic<bool> s_face_present{false};
+
+// Stage 2+3: camera frame -> Edge Impulse -> debounced face/no_face events over LTE.
+// Privacy: frames stay in RAM; only label/confidence/timing leave the device.
+static void inference_task(void*) {
+    // Arena (~150 KB) in PSRAM: ~240 ms/inference is plenty (>3/s) and keeps internal RAM for
+    // USB host + PPP/lwIP (+ TLS later). See docs/memory-budget.md.
+    inference::set_arena_policy(inference::ArenaPolicy::Psram);
+    if (inference::init() != ESP_OK) {
+        ESP_LOGE(TAG, "inference::init failed");
+        vTaskDelete(nullptr);
+        return;
+    }
+    const int w = camera::model_width(), h = camera::model_height();
+    if (w != inference::input_width() || h != inference::input_height()) {
+        ESP_LOGE(TAG, "camera model size %dx%d != model input %dx%d", w, h, inference::input_width(),
+                 inference::input_height());
+        vTaskDelete(nullptr);
+        return;
+    }
+    auto* frame = static_cast<uint8_t*>(heap_caps_malloc(size_t(w) * h, MALLOC_CAP_SPIRAM));
+    if (!frame) {
+        ESP_LOGE(TAG, "no PSRAM for inference frame");
+        vTaskDelete(nullptr);
+        return;
+    }
+    constexpr int kDebounce = 2;             // consecutive frames before a state change counts
+    constexpr int64_t kMinEventGapUs = 10'000'000;  // max 1 event / 10 s
+    bool state = false;
+    int streak = 0;
+    int64_t last_event = -kMinEventGapUs, t_stats = esp_timer_get_time();
+    uint32_t n = 0, n_face = 0;
+    uint64_t dsp = 0, inf = 0;
+    float best_conf = 0;
+    bool psram = false;
+    for (;;) {
+        camera::FrameInfo fi{};
+        if (camera::get_latest(frame, size_t(w) * h, &fi, pdMS_TO_TICKS(1000)) == ESP_OK) {
+            const auto r = inference::run(frame, w, h);
+            if (r.err == 0) {
+                ++n;
+                dsp += r.dsp_ms;
+                inf += r.inference_ms;
+                psram = r.arena_in_psram;
+                const bool face = !r.boxes.empty();
+                if (face) {
+                    ++n_face;
+                    if (r.confidence > best_conf) best_conf = r.confidence;
+                }
+                streak = (face != state) ? streak + 1 : 0;
+                const int64_t now = esp_timer_get_time();
+                if (streak >= kDebounce && now - last_event >= kMinEventGapUs) {
+                    state = face;
+                    streak = 0;
+                    last_event = now;
+                    s_face_present = state;
+                    ESP_LOGI(TAG, "EVENT %s (conf %.2f, %u boxes, inf %d ms)", state ? "face" : "no_face",
+                             r.confidence, unsigned(r.boxes.size()), r.inference_ms);
+#if CONFIG_APP_ENABLE_LTE
+                    char json[256];
+                    snprintf(json, sizeof(json),
+                             "{\"device\":\"f1\",\"event\":\"%s\",\"ts\":%lld,\"label\":\"%s\","
+                             "\"confidence\":%.2f,\"boxes\":%u,\"inference_ms\":%d,\"rssi\":%d}",
+                             state ? "face" : "no_face", (long long)(now / 1000000), r.label.c_str(),
+                             r.confidence, unsigned(r.boxes.size()), r.inference_ms, lte::info().rssi);
+                    lte::publish_async(json);
+#endif
+                }
+            } else {
+                ESP_LOGW(TAG, "run_classifier error %d", r.err);
+            }
+        }
+        const int64_t now = esp_timer_get_time();
+        if (now - t_stats >= 5'000'000) {
+            const float dt = float(now - t_stats) / 1e6f;
+            ESP_LOGI(TAG, "infer %.1f/s | dsp %.1f ms, inf %.1f ms (arena %s) | face in %lu/%lu, best %.2f | state %s | heap int %u min %u",
+                     n / dt, n ? double(dsp) / n : 0.0, n ? double(inf) / n : 0.0, psram ? "PSRAM" : "internal",
+                     (unsigned long)n_face, (unsigned long)n, best_conf, state ? "FACE" : "none",
+                     heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+            t_stats = now;
+            n = n_face = 0;
+            dsp = inf = 0;
+            best_conf = 0;
+        }
+    }
+}
+#endif
+
+#if CONFIG_APP_ENABLE_CAMERA && !CONFIG_APP_ENABLE_INFERENCE
 // Stage 3 hook: pull the latest grayscale model-size frame and log frame rate, decode time and
 // heap. Frames stay in RAM only (privacy: nothing is stored or uploaded). Stage 4 replaces this
 // with the inference consumer.
@@ -85,8 +178,13 @@ extern "C" void app_main() {
     if (esp_err_t e = camera::start(); e != ESP_OK) {
         ESP_LOGE(TAG, "camera::start failed: %s", esp_err_to_name(e));
     } else {
+#if CONFIG_APP_ENABLE_INFERENCE
+        // Core 1 = camera + inference, core 0 = LTE (HANDOFF Stage 4.1). EI needs a deep stack.
+        xTaskCreatePinnedToCore(inference_task, "infer", 16384, nullptr, 3, nullptr, 1);
+#else
         xTaskCreatePinnedToCore(camera_stats_task, "cam_stats", 3072, nullptr, 3, nullptr,
                                 CONFIG_APP_CAMERA_TASK_CORE);
+#endif
     }
 #endif
 
@@ -100,6 +198,10 @@ extern "C" void app_main() {
     for (unsigned i = 0;; ++i) {
         const bool up = lte::is_connected();
         // LED: blue blink = attaching, solid green = connected
+#if CONFIG_APP_ENABLE_CAMERA && CONFIG_APP_ENABLE_INFERENCE
+        if (s_face_present) board::led_set(24, 0, 24);  // magenta: face detected
+        else
+#endif
         if (up) board::led_set(0, 24, 0);
         else board::led_set(0, 0, (i & 1) ? 24 : 0);
 

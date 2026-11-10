@@ -33,22 +33,28 @@ int get_gray_as_rgb888(size_t offset, size_t length, float* out) {
 }  // namespace
 
 // ESP-NN wants 16-byte aligned buffers (see SDK porting comment, esp-nn issue #7).
-void* ei_malloc(size_t size) { return heap_caps_aligned_alloc(16, size, MALLOC_CAP_DEFAULT); }
+void* ei_malloc(size_t size) { return heap_caps_aligned_alloc(16, (size + 15) & ~size_t(15), MALLOC_CAP_DEFAULT); }
 void ei_free(void* p) { heap_caps_free(p); }
+// ESP32-S3 SIMD stores (EE.VST.128, used by ESP-NN) ignore the low 4 address bits, so EVERY buffer
+// the model can write to - including persistent/scratch buffers that overflow the arena and come
+// from here (EON AllocatePersistentBufferImpl -> ei_calloc) - must be 16-byte aligned and padded to
+// a 16-byte multiple. A plain heap_caps_calloc (8-byte aligned) let ESP-NN overwrite TLSF block
+// headers -> "block already marked as free" / StoreProhibited in tlsf on the next free.
+// heap_caps_free() releases aligned allocations (heap_caps_aligned_free is deprecated, esp_heap_caps.h).
 void* ei_calloc(size_t n, size_t size) {
-    const size_t bytes = n * size;
-    if (bytes < kBigAlloc) return heap_caps_calloc(n, size, MALLOC_CAP_DEFAULT);
+    const size_t bytes = ((n * size) + 15) & ~size_t(15);
+    if (bytes < kBigAlloc) return heap_caps_aligned_calloc(16, 1, bytes, MALLOC_CAP_DEFAULT);
     void* p = nullptr;
     const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     const uint32_t psram = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     switch (g_policy) {
-        case inference::ArenaPolicy::Internal: p = heap_caps_calloc(n, size, internal); break;
-        case inference::ArenaPolicy::Psram: p = heap_caps_calloc(n, size, psram); break;
+        case inference::ArenaPolicy::Internal: p = heap_caps_aligned_calloc(16, 1, bytes, internal); break;
+        case inference::ArenaPolicy::Psram: p = heap_caps_aligned_calloc(16, 1, bytes, psram); break;
         default:
             if (heap_caps_get_largest_free_block(internal) >= bytes + 16 &&
                 heap_caps_get_free_size(internal) >= bytes + kInternalReserve)
-                p = heap_caps_calloc(n, size, internal);
-            if (!p) p = heap_caps_calloc(n, size, psram);
+                p = heap_caps_aligned_calloc(16, 1, bytes, internal);
+            if (!p) p = heap_caps_aligned_calloc(16, 1, bytes, psram);
     }
     if (p) g_last_big_psram = esp_ptr_external_ram(p);
     ESP_LOGD(TAG, "arena %u B -> %s", (unsigned)bytes, p ? (g_last_big_psram ? "PSRAM" : "internal") : "FAILED");
