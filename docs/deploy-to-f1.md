@@ -36,6 +36,9 @@ components/inference/ei/
 
 No code changes are needed. The firmware reads the input size and labels from `model-parameters/`.
 
+Optional: a second export, the face recognition model, goes into `components/inference/ei-face-id/`.
+See [Face recognition](face-recognition.md).
+
 ## 3. Choose where events go
 
 1. Open [webhook.site](https://webhook.site). It shows you a unique URL, and keep the page open.
@@ -84,6 +87,7 @@ I (14956) lte: sent {"device":"f1","event":"boot","uptime_s":13,"csq":27,"free_h
 | Blue, blinking | Connecting to LTE-M |
 | Green | Online |
 | Magenta | A face is in view |
+| Cyan | A face you [registered](face-recognition.md) is in view |
 
 Look into the camera from 30 to 50 cm away, in good light. After two frames that agree, the F1 sends something like:
 
@@ -109,10 +113,34 @@ I (1727) preview: join Wi-Fi "F1-FaceCam" and open http://192.168.4.1
 ```
 
 Join the Wi-Fi network **F1-FaceCam** with your phone or laptop and open **http://192.168.4.1**. You see the
-camera image, a dashed square (the part the model looks at) and a magenta box on every face it finds.
-Phones may warn that the network has no internet; stay connected anyway.
+camera image, a dashed square (the part the model looks at) and a box on every face it finds, with the name if you
+[registered that person](face-recognition.md#4-register-people). Phones may warn that the network has no internet;
+stay connected anyway.
 
 The preview runs next to LTE. Both work at the same time, because Wi-Fi uses the ESP32-S3's radio and LTE uses the modem.
+
+The same page has two more tools, below.
+
+## 7. Collect training images
+
+Under **Collect training images**, type a label (for example `desk` or your name), pick a rate and press **Start**.
+Your browser keeps the camera frames; the F1 stores nothing. **Download .zip** gives you the images plus an
+`info.labels` file with the F1's own face boxes and a training/testing split.
+
+In your Edge Impulse face project, open **Data acquisition → Add data → Upload data**, select all unzipped files
+(including `info.labels`) and upload. Check the boxes, fix the ones that are off, and retrain.
+Frames with nobody in them come in with no boxes: that's how the model learns what is *not* a face.
+
+## 8. Update the firmware over Wi-Fi
+
+After the first USB flash, new firmware (for example with a retrained model) can go over Wi-Fi:
+
+1. Put the new export in place and run `pio run`.
+2. On the preview page, under **Firmware**, choose `.pio/build/f1/firmware.bin` and press **Update**.
+3. The F1 writes it into its second firmware slot, checks it and restarts. The page shows the new version.
+
+If the new firmware crashes before its boot self-test is done, the F1 goes back to the previous one by itself.
+Registered people are kept: they live in their own flash partition.
 
 ## Troubleshooting
 
@@ -126,4 +154,6 @@ The preview runs next to LTE. Both work at the same time, because Wi-Fi uses the
 | Stays blue | The first attach can take a few minutes. Check that you have LTE-M coverage, and the APN (`iot.1nce.net` for the kit's SIM). |
 | `POST failed` | Open your URL in a browser. When the free webhook.site inbox is full, it rejects requests. |
 | Preview page doesn't load | Check the log for `preview:`. The password needs at least 8 characters. Use `http://`, not `https://`. |
+| Name shows "unknown" for a registered person | Stand at the distance you registered from, in similar light, or register again to add pictures. |
+| `Update failed` on the page | Upload `firmware.bin` (not `bootloader.bin` or the `.elf`), and stay on the F1's Wi-Fi until it restarts. |
 | `Please check pull-up resistances` or `Rx Break` warnings | Harmless: the board has external I2C pull-ups, and the modem's UART line glitches while it resets. |

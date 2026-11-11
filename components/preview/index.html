@@ -20,6 +20,7 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .stat span { font-size: 12px; color: var(--muted); }
   .known b { color: var(--known); }
+  @media (max-width: 480px) { .stats { grid-template-columns: repeat(2, 1fr); } }
   ul { list-style: none; padding: 0; margin: 0 0 12px; }
   li { display: flex; align-items: center; gap: 8px; background: var(--card); border-radius: 8px;
        padding: 8px 10px; margin-bottom: 6px; }
@@ -34,6 +35,10 @@
   .empty { color: var(--muted); }
   progress { width: 100%; height: 8px; margin-top: 8px; accent-color: var(--known); }
   #fw { color: var(--muted); font-size: 13px; }
+  select { font: inherit; padding: 8px; border-radius: 8px; border: 1px solid #3c4043; background: #0b0d10; color: inherit; }
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .row span { flex: 1; color: var(--muted); }
+  button:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
@@ -58,6 +63,20 @@
   </form>
   <p style="margin-top:8px">Register: stand about 50 cm from the webcam, alone, in good light. The F1 takes
      5 pictures (about 15 s). Recognition only runs while at least one person is registered.</p>
+
+  <h2>Collect training images</h2>
+  <form id="collect">
+    <input id="label" maxlength="30" placeholder="Label, e.g. desk or ada" autocomplete="off" required>
+    <select id="every"><option value="1000">1 per second</option><option value="500">2 per second</option>
+      <option value="250">4 per second</option></select>
+    <button class="primary">Start</button>
+  </form>
+  <div class="row"><span id="count">0 images</span>
+    <button id="download" disabled>Download .zip</button><button id="clear" disabled>Clear</button></div>
+  <p style="margin-top:8px">Saves camera frames in this browser (not on the F1), with the F1's face boxes in
+     <code>info.labels</code>. Upload all the unzipped files in Edge Impulse under
+     <b>Data acquisition &rarr; Add data &rarr; Upload data</b>, check the boxes, retrain. Frames with nobody in
+     them teach the model what is <i>not</i> a face.</p>
 
   <h2>Firmware</h2>
   <p id="fw">–</p>
@@ -119,8 +138,10 @@ async function loop() {
     const res = await fetch('/frame.jpg', { cache: 'no-store' });
     if (!res.ok) throw new Error(res.status);
     const det = JSON.parse(res.headers.get('X-Detections') || '{"size":96,"faces":[]}');
-    const image = await createImageBitmap(await res.blob());
+    const blob = await res.blob();
+    const image = await createImageBitmap(blob);
     draw(image, det);
+    collect(blob, det, image.width, image.height);
     image.close();
     frames++;
   } catch (e) {
@@ -170,6 +191,91 @@ $('add').onsubmit = e => {
   e.preventDefault();
   if ($('name').disabled) post('/people/cancel');
   else { post(`/people/add?name=${q($('name').value)}`); $('name').value = ''; }
+};
+
+// --- Collect training images for Edge Impulse (kept in this browser only) ---
+const shots = [];  // {name, blob, boxes}
+let collecting = null, lastShot = 0;
+
+function collect(blob, det, width, height) {
+  if (!collecting || performance.now() - lastShot < collecting.every) return;
+  lastShot = performance.now();
+  // The F1's face boxes in image pixels: the same squares as drawn on the live view.
+  const side = Math.min(width, height), ox = (width - side) / 2, oy = (height - side) / 2;
+  const s = Math.round(side / 2), scale = side / det.size;
+  const boxes = det.faces.map(([x, y, w, h]) => {
+    const bx = Math.max(0, Math.round(ox + (x + w / 2) * scale - s / 2));
+    const by = Math.max(0, Math.round(oy + (y + h / 2) * scale - s / 2));
+    return { label: 'face', x: bx, y: by, width: Math.min(s, width - bx), height: Math.min(s, height - by) };
+  });
+  const id = (Date.now().toString(36) + shots.length.toString(36)).slice(-8);
+  shots.push({ name: `${collecting.label}.${id}.jpg`, label: collecting.label, blob, boxes });
+  showCount();
+}
+
+function showCount() {
+  $('count').textContent = `${shots.length} images` + (collecting ? ' (collecting...)' : '');
+  $('download').disabled = $('clear').disabled = !shots.length || !!collecting;
+}
+
+$('collect').onsubmit = e => {
+  e.preventDefault();
+  const label = $('label').value.trim().replace(/[^\w-]+/g, '_');  // EI takes the label from the file name
+  collecting = collecting ? null : { label, every: +$('every').value };
+  $('collect').querySelector('button').textContent = collecting ? 'Stop' : 'Start';
+  $('label').disabled = $('every').disabled = !!collecting;
+  showCount();
+};
+$('clear').onclick = () => { shots.length = 0; showCount(); };
+
+// A zip file without compression (JPEGs are compressed already): a local header + data per file,
+// then a central directory. Enough for any unzip tool.
+const crcTable = Array.from({ length: 256 }, (_, n) => {
+  for (let k = 0; k < 8; k++) n = n & 1 ? 0xedb88320 ^ (n >>> 1) : n >>> 1;
+  return n >>> 0;
+});
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (const b of bytes) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function zip(files) {  // files: [{name, bytes}]
+  const enc = new TextEncoder(), parts = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), crc = crc32(f.bytes), n = f.bytes.length;
+    const head = new DataView(new ArrayBuffer(30));
+    [[0, 0x04034b50, 4], [4, 20, 2], [14, crc, 4], [18, n, 4], [22, n, 4], [26, name.length, 2]]
+      .forEach(([at, v, len]) => len === 4 ? head.setUint32(at, v, true) : head.setUint16(at, v, true));
+    parts.push(head, name, f.bytes);
+    const dir = new DataView(new ArrayBuffer(46));
+    [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [16, crc, 4], [20, n, 4], [24, n, 4], [28, name.length, 2], [42, offset, 4]]
+      .forEach(([at, v, len]) => len === 4 ? dir.setUint32(at, v, true) : dir.setUint16(at, v, true));
+    central.push(dir, name);
+    offset += 30 + name.length + n;
+  }
+  const size = central.reduce((a, p) => a + p.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  [[0, 0x06054b50, 4], [8, files.length, 2], [10, files.length, 2], [12, size, 4], [16, offset, 4]]
+    .forEach(([at, v, len]) => len === 4 ? end.setUint32(at, v, true) : end.setUint16(at, v, true));
+  return new Blob([...parts, ...central, end], { type: 'application/zip' });
+}
+
+$('download').onclick = async () => {
+  const files = [];
+  // info.labels: Edge Impulse's annotation file (label, boxes and training/testing split per image).
+  const labels = { version: 1, files: [] };
+  for (const s of shots) {
+    files.push({ name: s.name, bytes: new Uint8Array(await s.blob.arrayBuffer()) });
+    labels.files.push({ path: s.name, name: s.name.replace(/\.jpg$/, ''), category: Math.random() < 0.8 ? 'training' : 'testing',
+                        label: { type: 'label', label: s.label }, boundingBoxes: s.boxes });
+  }
+  files.push({ name: 'info.labels', bytes: new TextEncoder().encode(JSON.stringify(labels, null, 1)) });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(zip(files));
+  a.download = `f1-images-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.zip`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 };
 
 // --- Firmware: show the running version, upload a new one ---

@@ -69,7 +69,9 @@ Next: [put the model on the F1](deploy-to-f1.md).
 
 - **Teach it what is *not* a face.** The public dataset is only faces, so in our self-test the model
   takes the shiny spoon in a coffee photo for a face (score 0.90). Add 50 to 100 photos of empty rooms, desks and
-  objects with **no** boxes in **Data acquisition**, then retrain. You can take them with your phone or laptop
-  through **Collect new data**.
-- **Train on your own scene.** Photos from the place where the F1 will hang, in its lighting, help more than anything else.
+  objects with **no** boxes in **Data acquisition**, then retrain. The easiest way: point the F1 at an empty room
+  and use **Collect training images** on its [preview page](deploy-to-f1.md#7-collect-training-images).
+- **Train on your own scene.** Photos from the F1's own webcam, where it will hang, in its lighting, help more than
+  anything else. The preview page exports them with the F1's face boxes already filled in.
+- **Ship it without a cable.** After retraining, build and [upload the new firmware from the preview page](deploy-to-f1.md#8-update-the-firmware-over-wi-fi).
 - **Check speed before you flash.** **Live classification** and **Model testing** show results on the test set in the browser.

@@ -22,8 +22,10 @@ config APP_PREVIEW
     default n
     help
         The F1 opens its own Wi-Fi network. Join it with a phone or laptop and open
-        http://192.168.4.1 to see the camera with the detected faces.
-        Off by default: with it on, camera images are sent to the browser that asks for them.
+        http://192.168.4.1 to see the camera with the detected faces, register people,
+        collect training images and install new firmware.
+        Off by default: with it on, camera images are sent to the browser that asks for them,
+        and anyone with the Wi-Fi password can change people and firmware.
 
 config APP_PREVIEW_SSID
     string "Wi-Fi network name"
