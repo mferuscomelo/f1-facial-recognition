@@ -12,6 +12,7 @@
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "face_id.hpp"
@@ -100,6 +101,9 @@ static void enroll_step(const inference::Result& r, const char* name, float* fp)
 
 static void ai_task(void*) {
     inference::self_test();  // known photos first: proves the models work before the camera does
+    // This firmware runs: if it came from a web-page update, keep it (otherwise the bootloader
+    // would go back to the previous firmware on the next restart).
+    esp_ota_mark_app_valid_cancel_rollback();
 
     const int w = inference::input_width(), h = inference::input_height();
     auto* frame = static_cast<uint8_t*>(heap_caps_malloc(w * h, MALLOC_CAP_SPIRAM));

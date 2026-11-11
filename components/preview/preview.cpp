@@ -8,6 +8,7 @@
 //   POST /people/cancel       stop registering
 //   POST /people/rename?id=&name=
 //   POST /people/delete?id=
+//   GET  /info, POST /update  firmware version and firmware update (update.cpp)
 //
 // The JPEG comes straight from the webcam, so the F1 never re-encodes an image.
 #include "preview.hpp"
@@ -35,6 +36,7 @@ void update(const inference::Result&, const people::Match*, const char*) {}
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "nvs_flash.h"
+#include "update.hpp"
 
 extern const char index_html_start[] asm("_binary_index_html_start");
 
@@ -198,6 +200,8 @@ esp_err_t start() {
         {"/people/cancel", HTTP_POST, people_cancel, nullptr},
         {"/people/rename", HTTP_POST, people_rename, nullptr},
         {"/people/delete", HTTP_POST, people_delete, nullptr},
+        {"/info", HTTP_GET, handle_info, nullptr},
+        {"/update", HTTP_POST, handle_update, nullptr},
     };
     for (const auto& r : routes) httpd_register_uri_handler(server, &r);
     ESP_LOGI(TAG, "join Wi-Fi \"%s\" and open http://192.168.4.1", CONFIG_APP_PREVIEW_SSID);

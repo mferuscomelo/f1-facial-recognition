@@ -32,6 +32,8 @@
            background: #3c4043; color: inherit; }
   button.primary { background: var(--known); color: #062a30; font-weight: 600; }
   .empty { color: var(--muted); }
+  progress { width: 100%; height: 8px; margin-top: 8px; accent-color: var(--known); }
+  #fw { color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -56,6 +58,17 @@
   </form>
   <p style="margin-top:8px">Register: stand about 50 cm from the webcam, alone, in good light. The F1 takes
      5 pictures (about 15 s). Recognition only runs while at least one person is registered.</p>
+
+  <h2>Firmware</h2>
+  <p id="fw">–</p>
+  <form id="update">
+    <input id="bin" type="file" accept=".bin" required>
+    <button class="primary">Update</button>
+  </form>
+  <progress id="progress" max="1" value="0" hidden></progress>
+  <p style="margin-top:8px">New model from Edge Impulse? Put the export in the project, run
+     <code>pio run</code> and upload <code>.pio/build/f1/firmware.bin</code> here. If the new firmware does not
+     start properly, the F1 goes back to this one.</p>
 </main>
 <script>
 const canvas = document.getElementById('view');
@@ -159,8 +172,37 @@ $('add').onsubmit = e => {
   else { post(`/people/add?name=${q($('name').value)}`); $('name').value = ''; }
 };
 
+// --- Firmware: show the running version, upload a new one ---
+async function info() {
+  try {
+    const i = await (await fetch('/info', { cache: 'no-store' })).json();
+    $('fw').textContent = `Running ${i.version}, built ${i.built} (slot ${i.slot}).`;
+    return true;
+  } catch (e) { return false; }
+}
+
+$('update').onsubmit = e => {
+  e.preventDefault();
+  const file = $('bin').files[0];
+  const bar = $('progress'), xhr = new XMLHttpRequest();
+  bar.hidden = false;
+  xhr.upload.onprogress = ev => { bar.value = ev.loaded / ev.total; };
+  xhr.onload = async () => {
+    if (xhr.status !== 200) { $('fw').textContent = 'Update failed: ' + xhr.responseText; bar.hidden = true; return; }
+    $('fw').textContent = 'Update received, the F1 restarts...';
+    await new Promise(r => setTimeout(r, 8000));
+    while (!(await info())) await new Promise(r => setTimeout(r, 2000));  // back online?
+    bar.hidden = true;
+  };
+  xhr.onerror = () => { $('fw').textContent = 'Upload interrupted. Still on the F1 Wi-Fi?'; bar.hidden = true; };
+  $('fw').textContent = `Uploading ${file.name} (${(file.size / 1e6).toFixed(1)} MB)...`;
+  xhr.open('POST', '/update');
+  xhr.send(file);
+};
+
 loop();
 refresh();
+info();
 setInterval(refresh, 3000);
 </script>
 </body>
