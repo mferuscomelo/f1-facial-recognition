@@ -12,3 +12,4 @@ backup/
 # Edge Impulse export (drop-in, see components/inference/README.md)
 components/inference/ei/*
 !components/inference/ei/.gitkeep
+.playwright-mcp/
