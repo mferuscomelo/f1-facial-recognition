@@ -1,140 +1,20 @@
-menu "F1 facecam application"
-
-config APP_ENABLE_LTE
-    bool "Enable LTE-M (Stage 1)"
-    default y
-
-choice APP_LTE_MODE
-    prompt "Modem link mode"
-    default APP_LTE_MODE_CMUX
-    depends on APP_ENABLE_LTE
-    help
-        CMUX (what the SG SDK uses) multiplexes AT commands and PPP data on one UART, so
-        signal/registration can be monitored while online. Plain PPP is the fallback that
-        was verified first on hardware; AT commands are unavailable while it is up.
-
-config APP_LTE_MODE_CMUX
-    bool "CMUX (AT + PPP simultaneously)"
-
-config APP_LTE_MODE_PPP
-    bool "Plain PPP (no AT while online)"
-
-endchoice
-
-config APP_LTE_HEALTH_PERIOD_S
-    int "CMUX health-check period (CSQ + CEREG), seconds"
-    default 30
-    range 5 3600
-    depends on APP_LTE_MODE_CMUX
-
-config APP_LTE_APN
-    string "Primary APN"
-    default "iot.1nce.net"
-    depends on APP_ENABLE_LTE
-    help
-        Verified on hardware 2026-11-10: kit SIM attaches with iot.1nce.net (Platform 1.0); sensor.net never registered.
-
-config APP_LTE_APN_FALLBACK
-    string "Fallback APN (empty = none)"
-    default "sensor.net"
-    depends on APP_ENABLE_LTE
-
-config APP_LTE_ATTACH_TIMEOUT_S
-    int "Seconds to wait for network registration per APN"
-    default 180
-    depends on APP_ENABLE_LTE
+menu "F1 FaceCam"
 
 config APP_PUBLISH_URL
-    string "HTTP endpoint for JSON events (keep in sdkconfig.defaults.local)"
+    string "URL that receives the JSON events (HTTP POST)"
     default ""
-    depends on APP_ENABLE_LTE
-
-config APP_PUBLISH_PERIOD_S
-    int "Boot/heartbeat event period (seconds)"
-    default 60
-    depends on APP_ENABLE_LTE
-
-config APP_ENABLE_INFERENCE
-    bool "Enable Edge Impulse inference (Stage 2)"
-    default n
-
-config APP_ENABLE_CAMERA
-    bool "Enable USB UVC camera (Stage 3)"
-    default n
     help
-        USB host on the bottom USB-C (J202) + espressif/usb_host_uvc + espressif/esp_jpeg.
-        See components/camera/README.md.
+        For example a https://webhook.site inbox (use http://, see README).
+        Put it in sdkconfig.defaults.local so it stays out of git.
 
-if APP_ENABLE_CAMERA
-
-config APP_CAMERA_REQ_WIDTH
-    int "Requested MJPEG width"
-    default 320
-    range 64 640
+config APP_LTE_APN
+    string "APN of the SIM card"
+    default "iot.1nce.net"
     help
-        If the camera has no MJPEG format of exactly this size, the closest MJPEG format
-        <= 640x480 is used (ESP32-S3 USB is Full-Speed only, ~1 MB/s isochronous).
+        The F1 Starter Kit ships with a 1NCE SIM, which uses iot.1nce.net.
 
-config APP_CAMERA_REQ_HEIGHT
-    int "Requested MJPEG height"
-    default 240
-    range 48 480
-
-config APP_CAMERA_REQ_FPS
-    int "Requested frame rate (0 = camera default)"
-    default 15
-    range 0 30
-    help
-        Snapped to the nearest frame interval the camera advertises for the chosen format.
-
-config APP_CAMERA_MODEL_WIDTH
-    int "Model input width (grayscale output)"
-    default 96
-    range 8 640
-
-config APP_CAMERA_MODEL_HEIGHT
-    int "Model input height (grayscale output)"
-    default 96
-    range 8 480
-
-config APP_CAMERA_FRAME_BUFFERS
-    int "UVC driver frame buffers (PSRAM)"
-    default 3
-    range 2 8
-
-config APP_CAMERA_URB_COUNT
-    int "Number of USB transfers (URBs) for the video stream"
-    default 3
-    range 2 8
-    help
-        URB data buffers must be DMA-capable INTERNAL RAM on the ESP32-S3 (USB DWC DMA cannot
-        reach PSRAM on this chip). Internal cost ~= URB_COUNT * URB_SIZE (rounded up to the
-        endpoint max packet size).
-
-config APP_CAMERA_URB_SIZE
-    int "Size of one URB in bytes (0 = driver default, 4 x MPS)"
-    default 4096
-    range 0 16384
-
-config APP_CAMERA_PRINT_DESCRIPTORS
-    bool "Print the camera's full USB descriptors on connect"
-    default y
-
-config APP_CAMERA_TASK_CORE
-    int "Core for USB/UVC/decode tasks"
-    default 1
-    range 0 1
-    help
-        Stage 4 plan: core 1 = camera + inference, core 0 = LTE.
-
-config APP_CAMERA_STATS_PERIOD_S
-    int "Camera statistics log period in seconds (main.cpp hook)"
-    default 5
-
-endif
-
-config APP_HEAP_LOG_PERIOD_S
-    int "Heap telemetry period (seconds)"
-    default 10
+config APP_HEARTBEAT_PERIOD_S
+    int "Seconds between heartbeat messages"
+    default 300
 
 endmenu

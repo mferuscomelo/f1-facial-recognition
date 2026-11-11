@@ -9,7 +9,7 @@ dependencies.lock
 backup/
 .claude/
 
-# Edge Impulse export (drop-in, see components/inference/README.md)
+# Edge Impulse model export (see docs/deploy-to-f1.md)
 components/inference/ei/*
 !components/inference/ei/.gitkeep
 .playwright-mcp/

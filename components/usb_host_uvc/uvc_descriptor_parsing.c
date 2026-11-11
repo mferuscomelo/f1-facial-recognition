@@ -10,7 +10,6 @@
 #include <math.h>   // fabsf for float comparison
 #include <sys/param.h> // MIN
 #include "esp_bit_defs.h"
-#include "esp_log.h"  // F1 DIAG
 #include "usb/usb_helpers.h"
 #include "usb/uvc_host.h"
 #include "uvc_check_priv.h"
@@ -143,8 +142,6 @@ esp_err_t uvc_desc_get_streaming_intf_and_ep(
         // Here we look for an interface that offers the largest MPS that is not larger than requested MPS
         const uint8_t packets_per_frame = USB_EP_DESC_GET_MULT(ep_desc) + 1;
         const uint16_t current_mps = USB_EP_DESC_GET_MPS(ep_desc) * packets_per_frame;
-        ESP_LOGI("uvc-desc", "F1 DIAG: streaming intf %u alt %u: MPS %u x %u (limit %u)", bInterfaceNumber,
-                 intf_desc->bAlternateSetting, USB_EP_DESC_GET_MPS(ep_desc), packets_per_frame, dwMaxPayloadTransferSize);
         if (current_mps >= last_mps && current_mps <= dwMaxPayloadTransferSize) {
             last_mps = current_mps;
             *ep_desc_ret = ep_desc;

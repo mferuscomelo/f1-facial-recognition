@@ -1,7 +1,4 @@
-## Stage 3 camera dependencies (versions checked on components.espressif.com, 2026-11-10)
 dependencies:
-  idf: ">=5.5"
-  # USB Video Class host driver (successor of the deprecated usb_stream). Pulls espressif/usb (USB Host lib).
-  # espressif/usb_host_uvc 2.6.0 is vendored in components/usb_host_uvc (local patch, see uvc_control.c "F1 PATCH")
-  # Software JPEG decoder (TJpgDec wrapper / ROM tjpgd). ESP32-S3 has no HW JPEG decoder.
+  # The webcam driver (espressif/usb_host_uvc 2.6.0) is vendored in components/usb_host_uvc
+  # with a small patch, see the "F1 PATCH" comments there.
   espressif/esp_jpeg: "^1.3.2"

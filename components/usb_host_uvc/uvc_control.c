@@ -66,7 +66,7 @@ static esp_err_t uvc_host_stream_control(uvc_host_stream_hdl_t stream_hdl, uvc_v
         vs_control->bFrameIndex     = frame_desc->bFrameIndex;
 
         // F1 PATCH (vendored from espressif/usb_host_uvc 2.6.0): propose a payload size that fits the
-        // ISOC endpoint we can actually use on ESP32-S3 (MAX_MPS_IN = 596 -> 512-byte alt setting),
+        // ISOC endpoint we can actually use on ESP32-S3 (MAX_MPS_IN, see uvc_idf_version_priv.h),
         // instead of echoing the camera's value (e.g. 800), which made the camera send oversized packets
         // and the host pipe halt. UVC 1.1 sec. 4.3.1.1: host may set dwMaxPayloadTransferSize in PROBE.
         if (vs_control->dwMaxPayloadTransferSize == 0 || vs_control->dwMaxPayloadTransferSize > MAX_MPS_IN) {

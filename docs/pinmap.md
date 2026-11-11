@@ -7,7 +7,7 @@ Paths below are relative to `src/platforms/F1/` in that repo.
 | Item | Value | Source |
 |---|---|---|
 | J201 (top USB-C) | **Silicon Labs CP210x USB-UART bridge** (VID:PID 10c4:ea60) → UART0 console | Observed with `lsusb` on the host, enumerates as `/dev/ttyUSB0` |
-| Consequence | Native USB (GPIO19/20) is not the console, so J202 can be USB host without losing logs | inference from the above, verify in Stage 3 |
+| Consequence | Native USB (GPIO19/20) is not the console, so J202 can be USB host without losing logs | Confirmed: logs keep working while a webcam streams on J202 |
 
 ## Memory
 | Item | Value | Source |
@@ -62,5 +62,8 @@ Reset: lte_reset_n low ~100 ms, then high (`comps/ioexp-if/ioexp.c:849-865`).
 | Antennas | LTE = on-board PCB antenna ANT100; LoRa = IPEX JT103 (external) | https://docs.sgwireless.com/v1.4.1/hardware/f1-starter-kit.html |
 | Default APN in SG docs | `iot.1nce.net` (examples only, SDK default is empty/carrier default) | `comps/lte/modlte.md:38,113` |
 
-## Still open
-- Modem flow control: SG defines RTS/CTS pins; whether they enable HW flow control is checked in Stage 1.
+## USB host (webcam)
+| Item | Value | Source |
+|---|---|---|
+| J202 (bottom USB-C) | ESP32-S3 native USB (GPIO19/20), host mode, supplies 5 V to the webcam | Verified on the board with a Logitech 046d:0829 |
+| Modem flow control | Hardware RTS/CTS, 115200 baud | `components/lte/lte.cpp`, verified on the board |
