@@ -36,3 +36,13 @@
 - Fixed ESP-NN heap corruption (16-byte aligned/padded ei_calloc/ei_malloc).
 - Boot self-test on public-domain images: pipeline localises faces correctly, but the stand-in (colour, unlicensed) model only scores 0.11–0.32 (< 0.5 threshold) -> no events yet.
 - End-to-end blockers: (1) new webhook.site URL (inbox full), (2) better model: clone public grayscale "Face detection - FOMO" project and export C++ library zip (needs user's EI login).
+
+## 2026-11-11 01:25 — own model deployed
+- Cloned public EI project 87291 -> "F1 face detection - FOMO" (EI project 1161327, private, user's account),
+  switched Image block RGB -> Grayscale, retrained (FOMO MobileNetV2 0.35, 70 cycles): val precision 0.90, recall 0.87, F1 0.88.
+  Exported C++ library (EON, int8) into components/inference/ei/ (still gitignored).
+- Boot self-test: astronaut face 1.00, full portrait 0.99 (correct location), coffee FALSE POSITIVE 0.90 on the spoon bowl
+  (no negative samples in training data). Inference 158-289 ms.
+- New webhook: http://webhook.site/bf6f1ff1-73e7-4456-9d1c-bbea9ed229db (in sdkconfig.defaults.local); boot + heartbeats arriving.
+- Dataset licence note: FFHQ (NVIDIA) is CC BY-NC-SA 4.0 -> fine for a POC, check before any commercial use.
+- Next: live camera test in good light; if false positives show up, add non-face images (empty rooms, objects) as negatives and retrain.
