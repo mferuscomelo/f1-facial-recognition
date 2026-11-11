@@ -38,3 +38,4 @@ CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=4096
 # JPEG: webcams often leave out the Huffman tables, so use the decoder that has defaults built in
 CONFIG_JD_USE_ROM=n
 CONFIG_JD_DEFAULT_HUFFMAN=y
+

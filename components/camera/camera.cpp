@@ -24,7 +24,6 @@ const char* TAG = "camera";
 
 // USB on the ESP32-S3 is Full-Speed (12 Mbit/s), so we ask for a small MJPEG stream.
 constexpr int kWantWidth = 320, kWantHeight = 240;
-constexpr size_t kMaxJpegBytes = 100 * 1024;
 constexpr size_t kRgbBytes = 320 * 240 * 3;  // largest decoded image we accept
 constexpr int kCore = 1;                     // camera + AI on core 1, LTE on core 0
 
@@ -37,6 +36,11 @@ SemaphoreHandle_t s_frame_ready;
 uint8_t* s_rgb;
 uint8_t s_jpeg_work[4096];  // decoder scratch, in fast internal RAM
 
+// A second copy of the newest JPEG for the live preview (components/preview).
+uint8_t* s_preview;
+size_t s_preview_len;
+SemaphoreHandle_t s_preview_lock;
+
 // Plug / unplug events, handled in camera_task (UVC calls are not allowed in callbacks).
 struct Event {
     bool connected;
@@ -47,7 +51,14 @@ QueueHandle_t s_events;
 uvc_host_stream_hdl_t s_stream;
 
 bool on_frame(const uvc_host_frame_t* frame, void*) {
-    if (!s_jpeg_full && frame->data_len > 0 && frame->data_len <= kMaxJpegBytes) {
+    if (frame->data_len == 0 || frame->data_len > kMaxJpegBytes) return true;
+    // Never wait here: if the preview is reading its copy, skip this frame for it.
+    if (xSemaphoreTake(s_preview_lock, 0) == pdTRUE) {
+        memcpy(s_preview, frame->data, frame->data_len);
+        s_preview_len = frame->data_len;
+        xSemaphoreGive(s_preview_lock);
+    }
+    if (!s_jpeg_full) {
         memcpy(s_jpeg, frame->data, frame->data_len);
         s_jpeg_len = frame->data_len;
         s_jpeg_full = true;
@@ -173,9 +184,11 @@ void crop_resize_gray(const uint8_t* rgb, int sw, int sh, uint8_t* out, int w, i
 esp_err_t start() {
     s_jpeg = static_cast<uint8_t*>(heap_caps_malloc(kMaxJpegBytes, MALLOC_CAP_SPIRAM));
     s_rgb = static_cast<uint8_t*>(heap_caps_malloc(kRgbBytes, MALLOC_CAP_SPIRAM));
+    s_preview = static_cast<uint8_t*>(heap_caps_malloc(kMaxJpegBytes, MALLOC_CAP_SPIRAM));
     s_frame_ready = xSemaphoreCreateBinary();
+    s_preview_lock = xSemaphoreCreateMutex();
     s_events = xQueueCreate(4, sizeof(Event));
-    if (!s_jpeg || !s_rgb) return ESP_ERR_NO_MEM;
+    if (!s_jpeg || !s_rgb || !s_preview) return ESP_ERR_NO_MEM;
 
     // The USB host library is installed from its own task so its interrupt lands on kCore.
     SemaphoreHandle_t done = xSemaphoreCreateBinary();
@@ -217,6 +230,14 @@ esp_err_t capture(uint8_t* gray, int width, int height, TickType_t timeout) {
     s_jpeg_full = false;  // the USB callback may fill the buffer again
     if (err == ESP_OK) crop_resize_gray(s_rgb, img.width, img.height, gray, width, height);
     return err;
+}
+
+size_t latest_jpeg(uint8_t* dst, size_t capacity) {
+    xSemaphoreTake(s_preview_lock, portMAX_DELAY);
+    const size_t len = s_preview_len <= capacity ? s_preview_len : 0;
+    memcpy(dst, s_preview, len);
+    xSemaphoreGive(s_preview_lock);
+    return len;
 }
 
 }  // namespace camera

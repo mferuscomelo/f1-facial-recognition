@@ -1,6 +1,6 @@
 # How it works
 
-The firmware is under 800 lines of C++ on top of ESP-IDF, in four parts. Each one does a single job.
+The firmware is under 1,000 lines of C++ on top of ESP-IDF, in four parts plus an optional live preview. Each one does a single job.
 
 ```mermaid
 flowchart TB
@@ -14,6 +14,7 @@ flowchart TB
         sup["lte task<br/>attach, CMUX, reconnect"]
     end
     app --> q
+    app -.->|optional| web["Wi-Fi access point<br/>live preview page"]
 ```
 
 The ESP32-S3 has two cores. The camera and model run on one, so the cellular link on the other never waits for them.
@@ -55,6 +56,17 @@ The ESP32-S3 has two cores. The camera and model run on one, so the cellular lin
 - It sends an event only when the answer changes (face to no face, or back) for **2 frames in a row**, and at most every
   **10 s**. This stops one blurry frame from causing a message.
 - The main loop drives the status LED and sends a `boot` message, then a `heartbeat` every 5 minutes.
+
+## 5. Live preview (optional): [components/preview](../components/preview/preview.cpp)
+
+- The F1 starts a Wi-Fi **access point** (WPA2) and a small **web server** on core 0.
+- The page ([index.html](../components/preview/index.html), built into the firmware) asks for `/frame.jpg` again and again.
+  Each answer is the newest webcam JPEG, sent exactly as the camera made it: the F1 never re-encodes an image.
+- The latest detections go along in an `X-Detections` HTTP header, for example
+  `{"size":96,"ms":157,"faces":[[40,32,8,8,0.97]]}`. The page draws the boxes on a canvas over the image,
+  mapped back from the model's 96x96 square onto the camera frame.
+- FOMO finds face *centres*, so the page draws a fixed-size square around each one.
+- Cost on the board: about 100 KB of internal RAM (143 KB stays free) and 0.4 MB of flash. The model speed is unchanged.
 
 ## F1-specific details worth knowing
 

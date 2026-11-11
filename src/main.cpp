@@ -3,7 +3,8 @@
 //   core 1: ai_task    grabs a frame, runs the model, decides "face" / "no face"
 //   core 0: lte        keeps the cellular link up and sends the events
 //
-// Privacy: images never leave the device. Only the result (face yes/no, score) is sent.
+// Privacy: only the result (face yes/no, score) goes over LTE. Images stay on the device,
+// unless you turn on the local Wi-Fi preview (CONFIG_APP_PREVIEW).
 #include <cstdio>
 
 #include "camera.hpp"
@@ -17,6 +18,7 @@
 #include "inference.hpp"
 #include "led_strip.h"
 #include "lte.hpp"
+#include "preview.hpp"
 #include "sdkconfig.h"
 
 static const char* TAG = "app";
@@ -61,6 +63,7 @@ static void ai_task(void*) {
         if (camera::capture(frame, w, h, pdMS_TO_TICKS(1000)) != ESP_OK) continue;
         const inference::Result r = inference::run(frame);
         if (!r.ok) continue;
+        preview::update(r);  // no-op unless the Wi-Fi preview is on
         uint32_t brightness = 0;  // average pixel value: handy to spot a covered lens or a dark room
         for (int i = 0; i < w * h; ++i) brightness += frame[i];
         ESP_LOGI(TAG, "%s  score %.2f  at (%d,%d)  %d ms  brightness %lu", r.face ? "FACE   " : "no face",
@@ -88,6 +91,7 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK(camera::start());
     xTaskCreatePinnedToCore(ai_task, "ai", 16384, nullptr, 3, nullptr, 1);  // the model needs a deep stack
     ESP_ERROR_CHECK(lte::start());
+    if (preview::start() != ESP_OK) ESP_LOGE(TAG, "live preview could not start");
 
     // Status LED + heartbeat. Magenta: face in view. Green: online. Blue blink: connecting.
     bool sent_boot = false;

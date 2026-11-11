@@ -4,7 +4,10 @@
 
 You plug a USB webcam into the F1. An Edge Impulse model looks for faces on the board itself.
 When someone shows up (or leaves), the F1 sends a small JSON message over LTE-M.
-It needs no Wi-Fi, no gateway and no cloud AI. Images never leave the device.
+It needs no Wi-Fi, no gateway and no cloud AI. Images stay on the device.
+
+Optional: turn on the **live preview**. The F1 opens its own Wi-Fi network; join it with your phone and
+watch the camera with the detected faces drawn on top.
 
 ```mermaid
 flowchart LR
@@ -40,7 +43,7 @@ enough memory and its own internet connection. Together they make a working edge
 | Model size | 29 KB flash, 146 KB working memory (in PSRAM) |
 | Model accuracy | F1 score **89%** on the validation set |
 | Power-on to first message | **~15 s** (LTE-M attach and send included) |
-| Firmware | 0.85 MB of 8 MB, 245 KB internal RAM left free |
+| Firmware | 0.85 MB of 8 MB, 245 KB internal RAM left free (1.2 MB and 143 KB with the Wi-Fi preview on) |
 
 ## Quick start
 
@@ -55,6 +58,12 @@ You need an **SG Wireless F1 Starter Kit**, a **USB webcam** that does MJPEG (mo
    ```
 4. **Build and flash.** Connect the top USB-C port (J201) and run `pio run -t upload -t monitor`.
 5. **Plug in the webcam** on the bottom USB-C port (J202) and look into it. The LED turns magenta, and a `face` event appears on webhook.site.
+6. **Optional, live preview:** add these lines to `sdkconfig.defaults.local`, flash again, join the Wi-Fi network
+   `F1-FaceCam` and open `http://192.168.4.1`:
+   ```
+   CONFIG_APP_PREVIEW=y
+   CONFIG_APP_PREVIEW_PASSWORD="at-least-8-chars"
+   ```
 
 Step-by-step instructions, the expected output and troubleshooting are in [Deploy to the F1](docs/deploy-to-f1.md).
 
@@ -79,7 +88,8 @@ components/usb_host_uvc/  Espressif's webcam driver with a small F1 patch
 
 ## Notes
 
-- **Privacy:** frames exist only in RAM and are overwritten by the next one. Only the result is sent.
+- **Privacy:** frames exist only in RAM and are overwritten by the next one. Only the result goes over LTE.
+  The live preview (off by default) sends frames to the browser on the F1's own password-protected Wi-Fi network, and nowhere else.
 - **Dataset licence:** the public face project is built on FFHQ images, licensed CC BY-NC-SA 4.0
   (non-commercial). For a product, train on data you have the rights to.
 - **Plain HTTP:** messages are sent unencrypted to keep the demo simple. Use HTTPS or MQTT over TLS for real deployments.

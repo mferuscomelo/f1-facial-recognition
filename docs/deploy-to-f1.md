@@ -93,6 +93,27 @@ Look into the camera from 30 to 50 cm away, in good light. After two frames that
 
 When you leave, a `no_face` event follows. Events are sent at most once every 10 s.
 
+## 6. Optional: live preview on your phone
+
+Add to `sdkconfig.defaults.local` (choose your own password, at least 8 characters):
+
+```
+CONFIG_APP_PREVIEW=y
+CONFIG_APP_PREVIEW_PASSWORD="choose-a-password"
+```
+
+Delete `sdkconfig.f1`, flash again, and look for:
+
+```
+I (1727) preview: join Wi-Fi "F1-FaceCam" and open http://192.168.4.1
+```
+
+Join the Wi-Fi network **F1-FaceCam** with your phone or laptop and open **http://192.168.4.1**. You see the
+camera image, a dashed square (the part the model looks at) and a magenta box on every face it finds.
+Phones may warn that the network has no internet; stay connected anyway.
+
+The preview runs next to LTE. Both work at the same time, because Wi-Fi uses the ESP32-S3's radio and LTE uses the modem.
+
 ## Troubleshooting
 
 | Symptom | What to try |
@@ -104,4 +125,5 @@ When you leave, a `no_face` event follows. Events are sent at most once every 10
 | `brightness` below about 20 | Too dark, or the lens is covered. |
 | Stays blue | The first attach can take a few minutes. Check that you have LTE-M coverage, and the APN (`iot.1nce.net` for the kit's SIM). |
 | `POST failed` | Open your URL in a browser. When the free webhook.site inbox is full, it rejects requests. |
+| Preview page doesn't load | Check the log for `preview:`. The password needs at least 8 characters. Use `http://`, not `https://`. |
 | `Please check pull-up resistances` or `Rx Break` warnings | Harmless: the board has external I2C pull-ups, and the modem's UART line glitches while it resets. |

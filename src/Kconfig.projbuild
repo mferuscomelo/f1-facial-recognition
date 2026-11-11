@@ -17,4 +17,24 @@ config APP_HEARTBEAT_PERIOD_S
     int "Seconds between heartbeat messages"
     default 300
 
+config APP_PREVIEW
+    bool "Live preview over Wi-Fi"
+    default n
+    help
+        The F1 opens its own Wi-Fi network. Join it with a phone or laptop and open
+        http://192.168.4.1 to see the camera with the detected faces.
+        Off by default: with it on, camera images are sent to the browser that asks for them.
+
+config APP_PREVIEW_SSID
+    string "Wi-Fi network name"
+    default "F1-FaceCam"
+    depends on APP_PREVIEW
+
+config APP_PREVIEW_PASSWORD
+    string "Wi-Fi password (at least 8 characters)"
+    default ""
+    depends on APP_PREVIEW
+    help
+        Put it in sdkconfig.defaults.local so it stays out of git.
+
 endmenu

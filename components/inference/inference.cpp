@@ -47,8 +47,8 @@ Result run(const uint8_t* gray) {
     r.time_ms = res.timing.classification;
     for (uint32_t i = 0; i < res.bounding_boxes_count; i++) {
         const auto& box = res.bounding_boxes[i];
-        if (box.value <= 0) continue;  // empty slot
-        r.count++;
+        if (box.value <= 0 || r.count == 10) continue;  // empty slot (or no room left)
+        r.boxes[r.count++] = {int(box.x), int(box.y), int(box.width), int(box.height), box.value};
         if (box.value > r.confidence) {
             r.confidence = box.value;
             r.x = box.x + box.width / 2;
