@@ -5,38 +5,64 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>F1 FaceCam</title>
 <style>
-  :root { color-scheme: dark; --accent: #e040fb; --muted: #9aa0a6; }
+  :root { color-scheme: dark; --face: #e040fb; --known: #22d3ee; --muted: #9aa0a6; --card: #1c2026; }
   body { margin: 0; padding: 16px; background: #111418; color: #e8eaed;
          font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 640px; margin: 0 auto; }
   h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 20px 0 8px; }
   p { margin: 0 0 12px; color: var(--muted); }
   canvas { width: 100%; height: auto; border-radius: 10px; background: #000; display: block; }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
-  .stat { background: #1c2026; border-radius: 8px; padding: 8px 10px; }
-  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .note { min-height: 1.4em; margin: 8px 0 0; color: var(--known); font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
+  .stat { background: var(--card); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .stat span { font-size: 12px; color: var(--muted); }
-  .face b { color: var(--accent); }
+  .known b { color: var(--known); }
+  ul { list-style: none; padding: 0; margin: 0 0 12px; }
+  li { display: flex; align-items: center; gap: 8px; background: var(--card); border-radius: 8px;
+       padding: 8px 10px; margin-bottom: 6px; }
+  li .name { flex: 1; font-weight: 600; overflow-wrap: anywhere; }
+  li small { color: var(--muted); font-weight: 400; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 8px;
+          border: 1px solid #3c4043; background: #0b0d10; color: inherit; }
+  button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 0; cursor: pointer;
+           background: #3c4043; color: inherit; }
+  button.primary { background: var(--known); color: #062a30; font-weight: 600; }
+  .empty { color: var(--muted); }
 </style>
 </head>
 <body>
 <main>
   <h1>F1 FaceCam: live view</h1>
-  <p>Webcam on the SG Wireless F1, face detection by an Edge Impulse model running on the board.
-     The dashed square is what the model sees.</p>
+  <p>Webcam on the SG Wireless F1. Edge Impulse models on the board find faces and recognise
+     the people you register below. The dashed square is what the face finder sees.</p>
   <canvas id="view" width="320" height="240"></canvas>
+  <div class="note" id="note"></div>
   <div class="stats">
-    <div class="stat" id="facesBox"><b id="faces">–</b><span>faces</span></div>
-    <div class="stat"><b id="score">–</b><span>best score</span></div>
-    <div class="stat"><b id="model">–</b><span>model time</span></div>
+    <div class="stat" id="whoBox"><b id="who">–</b><span>who</span></div>
+    <div class="stat"><b id="faces">–</b><span>faces</span></div>
+    <div class="stat"><b id="model">–</b><span>finder time</span></div>
     <div class="stat"><b id="fps">–</b><span>preview fps</span></div>
   </div>
+
+  <h2>People</h2>
+  <ul id="people"></ul>
+  <form id="add">
+    <input id="name" maxlength="31" placeholder="Name" autocomplete="off" required>
+    <button class="primary">Register</button>
+  </form>
+  <p style="margin-top:8px">Register: stand about 50 cm from the webcam, alone, in good light. The F1 takes
+     5 pictures (about 15 s). Recognition only runs while at least one person is registered.</p>
 </main>
 <script>
 const canvas = document.getElementById('view');
 const ctx = canvas.getContext('2d');
 const $ = id => document.getElementById(id);
-let frames = 0, lastFpsTime = performance.now();
+const text = s => decodeURIComponent(s || '');
+let frames = 0, lastFpsTime = performance.now(), wasBusy = false;
 
 // Boxes come in model pixels (e.g. 96x96). The model sees the centre square of the camera
 // image, so map them back onto that square.
@@ -50,25 +76,29 @@ function draw(image, det) {
   ctx.strokeRect(ox, oy, side, side);
   ctx.setLineDash([]);
 
-  let best = 0;
+  const known = det.who && det.who.name;
   for (const [x, y, w, h, score] of det.faces) {
-    best = Math.max(best, score);
-    // FOMO finds the centre of each face, so draw a fixed-size square around it.
-    const cx = ox + (x + w / 2) * scale, cy = oy + (y + h / 2) * scale;
-    const s = Math.max(w, h, det.size / 3) * scale;
-    ctx.lineWidth = 3; ctx.strokeStyle = '#e040fb';
-    ctx.strokeRect(cx - s / 2, cy - s / 2, s, s);
-    const label = `face ${Math.round(score * 100)}%`;
+    // FOMO finds the centre of each face, so draw a fixed-size square around it
+    // (half the image height: the same square the F1 cuts out for recognition).
+    const cx = x + w / 2, cy = y + h / 2;
+    const isBest = det.best && Math.abs(cx - det.best[0]) <= w && Math.abs(cy - det.best[1]) <= h;
+    const s = side / 2, px = ox + cx * scale - s / 2, py = oy + cy * scale - s / 2;
+    const color = isBest && known ? '#22d3ee' : '#e040fb';
+    let label = `face ${Math.round(score * 100)}%`;
+    if (isBest && det.who) label = known ? `${text(det.who.name)} ${Math.round(det.who.sim * 100)}%` : 'unknown';
+    ctx.lineWidth = 3; ctx.strokeStyle = color;
+    ctx.strokeRect(px, py, s, s);
     ctx.font = 'bold 13px system-ui, sans-serif';
-    ctx.fillStyle = '#e040fb';
-    ctx.fillRect(cx - s / 2 - 1.5, cy - s / 2 - 20, ctx.measureText(label).width + 10, 20);
+    ctx.fillStyle = color;
+    ctx.fillRect(px - 1.5, py - 20, ctx.measureText(label).width + 10, 20);
     ctx.fillStyle = '#fff';
-    ctx.fillText(label, cx - s / 2 + 4, cy - s / 2 - 5);
+    ctx.fillText(label, px + 4, py - 5);
   }
+  $('who').textContent = !det.faces.length ? '–' : !det.who ? '?' : known ? text(det.who.name) : 'unknown';
+  $('whoBox').classList.toggle('known', !!known && det.faces.length > 0);
   $('faces').textContent = det.faces.length;
-  $('facesBox').classList.toggle('face', det.faces.length > 0);
-  $('score').textContent = det.faces.length ? best.toFixed(2) : '–';
   $('model').textContent = det.ms ? det.ms + ' ms' : '–';
+  $('note').textContent = text(det.note);
 }
 
 async function loop() {
@@ -90,7 +120,48 @@ async function loop() {
   }
   requestAnimationFrame(loop);
 }
+
+// --- People: list, register, rename, delete ---
+async function post(url) {
+  const res = await fetch(url, { method: 'POST' });
+  if (!res.ok) alert(await res.text());
+  refresh();
+}
+const q = s => encodeURIComponent(s.trim());
+
+async function refresh() {
+  try {
+    const data = await (await fetch('/people', { cache: 'no-store' })).json();
+    const list = $('people');
+    list.innerHTML = '';
+    if (!data.people.length) list.innerHTML = '<li class="empty">Nobody registered yet.</li>';
+    for (const p of data.people) {
+      const li = document.createElement('li');
+      li.innerHTML = '<span class="name"></span><button>Rename</button><button>Delete</button>';
+      li.querySelector('.name').textContent = p.name + ' ';
+      li.querySelector('.name').insertAdjacentHTML('beforeend', `<small>${p.samples} pictures</small>`);
+      const [rename, del] = li.querySelectorAll('button');
+      rename.onclick = () => { const n = prompt('New name', p.name); if (n) post(`/people/rename?id=${p.id}&name=${q(n)}`); };
+      del.onclick = () => { if (confirm(`Delete ${p.name}?`)) post(`/people/delete?id=${p.id}`); };
+      list.appendChild(li);
+    }
+    const busy = data.enrolling;
+    $('add').querySelector('button').textContent = busy ? 'Stop' : 'Register';
+    $('name').disabled = !!busy;
+    if (busy || wasBusy) $('name').value = busy;  // show who is being registered; clear when done
+    wasBusy = !!busy;
+  } catch (e) { /* offline for a moment: try again on the next refresh */ }
+}
+
+$('add').onsubmit = e => {
+  e.preventDefault();
+  if ($('name').disabled) post('/people/cancel');
+  else { post(`/people/add?name=${q($('name').value)}`); $('name').value = ''; }
+};
+
 loop();
+refresh();
+setInterval(refresh, 3000);
 </script>
 </body>
 </html>

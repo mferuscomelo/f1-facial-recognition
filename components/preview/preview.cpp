@@ -1,13 +1,20 @@
 // Live preview: Wi-Fi access point + a tiny web server.
 //
-//   GET /           the page (index.html, built into the firmware)
-//   GET /frame.jpg  the newest camera frame, with the latest detections in the
-//                   "X-Detections" header, so the page can draw the boxes on that frame
+//   GET  /                    the page (index.html, built into the firmware)
+//   GET  /frame.jpg           the newest camera frame, with the latest detections in the
+//                             "X-Detections" header, so the page can draw the boxes on that frame
+//   GET  /people              who the F1 knows: {"people":[{"id":0,"name":"Ada","samples":5}],"enrolling":""}
+//   POST /people/add?name=    register someone (the camera loop takes the pictures)
+//   POST /people/cancel       stop registering
+//   POST /people/rename?id=&name=
+//   POST /people/delete?id=
 //
 // The JPEG comes straight from the webcam, so the F1 never re-encodes an image.
 #include "preview.hpp"
 
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "sdkconfig.h"
@@ -15,7 +22,7 @@
 #if !CONFIG_APP_PREVIEW
 namespace preview {
 esp_err_t start() { return ESP_OK; }
-void update(const inference::Result&) {}
+void update(const inference::Result&, const people::Match*, const char*) {}
 }  // namespace preview
 #else
 
@@ -36,7 +43,7 @@ namespace {
 const char* TAG = "preview";
 
 SemaphoreHandle_t s_lock;
-char s_detections[400] = "{\"size\":96,\"faces\":[]}";  // guarded by s_lock
+char s_detections[800] = "{\"size\":96,\"faces\":[]}";  // guarded by s_lock
 uint8_t* s_jpeg;                                          // only used by the web server task
 
 esp_err_t start_access_point() {
@@ -88,6 +95,86 @@ esp_err_t frame(httpd_req_t* req) {
     httpd_resp_set_hdr(req, "X-Detections", detections);
     return httpd_resp_send(req, reinterpret_cast<const char*>(s_jpeg), len);
 }
+// Percent-encodes text for the X-Detections header (headers must be plain ASCII).
+void url_encode(const char* in, char* out, size_t len) {
+    size_t n = 0;
+    for (; *in && n + 4 < len; ++in) {
+        const unsigned char c = *in;
+        if (isalnum(c) || c == ' ' || c == '.' || c == ',' || c == ':' || c == '-') out[n++] = c;
+        else n += snprintf(out + n, len - n, "%%%02X", c);
+    }
+    out[n] = 0;
+}
+
+// Reads ?key=value from the URL and undoes the browser's percent-encoding.
+bool query(httpd_req_t* req, const char* key, char* out, size_t len) {
+    char q[160], raw[100];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) != ESP_OK ||
+        httpd_query_key_value(q, key, raw, sizeof(raw)) != ESP_OK) return false;
+    size_t n = 0;
+    for (const char* p = raw; *p && n + 1 < len; ++p) {
+        if (*p == '%' && isxdigit(p[1]) && isxdigit(p[2])) {
+            const char hex[3] = {p[1], p[2], 0};
+            out[n++] = char(strtol(hex, nullptr, 16));
+            p += 2;
+        } else {
+            out[n++] = *p == '+' ? ' ' : *p;
+        }
+    }
+    out[n] = 0;
+    return true;
+}
+
+// A name from the page: 1-31 bytes, no quotes, backslashes or control characters.
+bool valid_name(const char* name) {
+    const size_t len = strlen(name);
+    if (len == 0 || len >= people::kNameLen) return false;
+    for (const char* c = name; *c; ++c)
+        if (*c == '"' || *c == '\\' || *c == '<' || *c == '>' || static_cast<unsigned char>(*c) < 0x20) return false;
+    return true;
+}
+
+esp_err_t reply(httpd_req_t* req, esp_err_t result) {
+    if (result != ESP_OK) httpd_resp_set_status(req, "400 Bad Request");
+    return httpd_resp_sendstr(req, result == ESP_OK ? "ok" : esp_err_to_name(result));
+}
+
+esp_err_t people_list(httpd_req_t* req) {
+    static char json[people::kMax * 80 + 100];
+    char enrolling[people::kNameLen];
+    people::enroll_active(enrolling);
+    int n = snprintf(json, sizeof(json), "{\"people\":");
+    n += people::to_json(json + n, sizeof(json) - n - 40);
+    snprintf(json + n, sizeof(json) - n, ",\"enrolling\":\"%s\"}", enrolling);
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, json);
+}
+
+esp_err_t people_add(httpd_req_t* req) {
+    char name[people::kNameLen];
+    if (!query(req, "name", name, sizeof(name)) || !valid_name(name)) return reply(req, ESP_ERR_INVALID_ARG);
+    people::enroll_start(name);
+    return reply(req, ESP_OK);
+}
+
+esp_err_t people_cancel(httpd_req_t* req) {
+    people::enroll_stop();
+    return reply(req, ESP_OK);
+}
+
+esp_err_t people_rename(httpd_req_t* req) {
+    char id[8], name[people::kNameLen];
+    if (!query(req, "id", id, sizeof(id)) || !query(req, "name", name, sizeof(name)) || !valid_name(name))
+        return reply(req, ESP_ERR_INVALID_ARG);
+    return reply(req, people::rename(atoi(id), name));
+}
+
+esp_err_t people_delete(httpd_req_t* req) {
+    char id[8];
+    if (!query(req, "id", id, sizeof(id))) return reply(req, ESP_ERR_INVALID_ARG);
+    return reply(req, people::remove(atoi(id)));
+}
 }  // namespace
 
 esp_err_t start() {
@@ -100,28 +187,41 @@ esp_err_t start() {
     cfg.core_id = 0;               // core 1 is busy with the camera and the model
     cfg.max_open_sockets = 4;
     cfg.lru_purge_enable = true;   // phones leave idle connections open
+    cfg.max_uri_handlers = 12;
     httpd_handle_t server;
     if (esp_err_t e = httpd_start(&server, &cfg); e != ESP_OK) return e;
     const httpd_uri_t routes[] = {
         {"/", HTTP_GET, page, nullptr},
         {"/frame.jpg", HTTP_GET, frame, nullptr},
+        {"/people", HTTP_GET, people_list, nullptr},
+        {"/people/add", HTTP_POST, people_add, nullptr},
+        {"/people/cancel", HTTP_POST, people_cancel, nullptr},
+        {"/people/rename", HTTP_POST, people_rename, nullptr},
+        {"/people/delete", HTTP_POST, people_delete, nullptr},
     };
     for (const auto& r : routes) httpd_register_uri_handler(server, &r);
     ESP_LOGI(TAG, "join Wi-Fi \"%s\" and open http://192.168.4.1", CONFIG_APP_PREVIEW_SSID);
     return ESP_OK;
 }
 
-void update(const inference::Result& r) {
+void update(const inference::Result& r, const people::Match* who, const char* note) {
     if (!s_lock) return;  // preview not running
-    // {"size":96,"faces":[[x,y,w,h,score],...]}  (input pixels)
-    char json[sizeof(s_detections)];
+    // {"size":96,"ms":157,"faces":[[x,y,w,h,score],...],"who":{"name":"Ada","sim":0.71},"note":"..."}
+    // Boxes are in model input pixels; names and notes are percent-encoded.
+    char json[sizeof(s_detections)], text[240];
     int n = snprintf(json, sizeof(json), "{\"size\":%d,\"ms\":%d,\"faces\":[", inference::input_width(), r.time_ms);
     for (int i = 0; i < r.count && n < int(sizeof(json)) - 40; ++i) {
         const auto& b = r.boxes[i];
         n += snprintf(json + n, sizeof(json) - n, "%s[%d,%d,%d,%d,%.2f]", i ? "," : "", b.x, b.y, b.width,
                       b.height, b.score);
     }
-    snprintf(json + n, sizeof(json) - n, "]}");
+    n += snprintf(json + n, sizeof(json) - n, "],\"best\":[%d,%d]", r.x, r.y);
+    if (who) {
+        url_encode(who->name, text, sizeof(text));
+        n += snprintf(json + n, sizeof(json) - n, ",\"who\":{\"name\":\"%s\",\"sim\":%.2f}", text, who->similarity);
+    }
+    url_encode(note, text, sizeof(text));
+    snprintf(json + n, sizeof(json) - n, ",\"note\":\"%s\"}", text);
     xSemaphoreTake(s_lock, portMAX_DELAY);
     memcpy(s_detections, json, sizeof(json));
     xSemaphoreGive(s_lock);

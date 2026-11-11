@@ -36,6 +36,10 @@ SemaphoreHandle_t s_frame_ready;
 uint8_t* s_rgb;
 uint8_t s_jpeg_work[4096];  // decoder scratch, in fast internal RAM
 
+// The JPEG behind the last capture(), kept so crop_face() can decode it again at full size.
+uint8_t* s_last;
+size_t s_last_len;
+
 // A second copy of the newest JPEG for the live preview (components/preview).
 uint8_t* s_preview;
 size_t s_preview_len;
@@ -179,16 +183,31 @@ void crop_resize_gray(const uint8_t* rgb, int sw, int sh, uint8_t* out, int w, i
         }
     }
 }
+
+// Decodes `jpeg` into s_rgb, shrunk by 2^scale. Returns the decoded size in `img`.
+esp_err_t decode(const uint8_t* jpeg, size_t len, int scale, esp_jpeg_image_output_t* img) {
+    esp_jpeg_image_cfg_t cfg = {};
+    cfg.indata = const_cast<uint8_t*>(jpeg);
+    cfg.indata_size = len;
+    cfg.out_format = JPEG_IMAGE_FORMAT_RGB888;
+    cfg.out_scale = static_cast<esp_jpeg_image_scale_t>(scale);
+    cfg.outbuf = s_rgb;
+    cfg.outbuf_size = kRgbBytes;
+    cfg.advanced.working_buffer = s_jpeg_work;
+    cfg.advanced.working_buffer_size = sizeof(s_jpeg_work);
+    return esp_jpeg_decode(&cfg, img);  // fails cleanly if the image is too big
+}
 }  // namespace
 
 esp_err_t start() {
     s_jpeg = static_cast<uint8_t*>(heap_caps_malloc(kMaxJpegBytes, MALLOC_CAP_SPIRAM));
+    s_last = static_cast<uint8_t*>(heap_caps_malloc(kMaxJpegBytes, MALLOC_CAP_SPIRAM));
     s_rgb = static_cast<uint8_t*>(heap_caps_malloc(kRgbBytes, MALLOC_CAP_SPIRAM));
     s_preview = static_cast<uint8_t*>(heap_caps_malloc(kMaxJpegBytes, MALLOC_CAP_SPIRAM));
     s_frame_ready = xSemaphoreCreateBinary();
     s_preview_lock = xSemaphoreCreateMutex();
     s_events = xQueueCreate(4, sizeof(Event));
-    if (!s_jpeg || !s_rgb || !s_preview) return ESP_ERR_NO_MEM;
+    if (!s_jpeg || !s_last || !s_rgb || !s_preview) return ESP_ERR_NO_MEM;
 
     // The USB host library is installed from its own task so its interrupt lands on kCore.
     SemaphoreHandle_t done = xSemaphoreCreateBinary();
@@ -210,26 +229,51 @@ esp_err_t start() {
 
 esp_err_t capture(uint8_t* gray, int width, int height, TickType_t timeout) {
     if (xSemaphoreTake(s_frame_ready, timeout) != pdTRUE) return ESP_ERR_TIMEOUT;
+    memcpy(s_last, s_jpeg, s_jpeg_len);
+    s_last_len = s_jpeg_len;
+    s_jpeg_full = false;  // the USB callback may fill the buffer again
 
     // Let the decoder shrink the image (1/2, 1/4 or 1/8) as far as the output size allows:
     // decoding fewer pixels is much faster.
     esp_jpeg_image_cfg_t cfg = {};
-    cfg.indata = s_jpeg;
-    cfg.indata_size = s_jpeg_len;
-    cfg.out_format = JPEG_IMAGE_FORMAT_RGB888;
-    cfg.advanced.working_buffer = s_jpeg_work;
-    cfg.advanced.working_buffer_size = sizeof(s_jpeg_work);
+    cfg.indata = s_last;
+    cfg.indata_size = s_last_len;
     esp_jpeg_image_output_t img = {};
     esp_err_t err = esp_jpeg_get_image_info(&cfg, &img);
     int scale = 3;  // 3 = 1/8, 2 = 1/4, 1 = 1/2, 0 = full size
     while (scale > 0 && ((img.width >> scale) < width || (img.height >> scale) < height)) --scale;
-    cfg.out_scale = static_cast<esp_jpeg_image_scale_t>(scale);
-    cfg.outbuf = s_rgb;
-    cfg.outbuf_size = kRgbBytes;
-    if (err == ESP_OK) err = esp_jpeg_decode(&cfg, &img);  // fails cleanly if the image is too big
-    s_jpeg_full = false;  // the USB callback may fill the buffer again
+    if (err == ESP_OK) err = decode(s_last, s_last_len, scale, &img);
     if (err == ESP_OK) crop_resize_gray(s_rgb, img.width, img.height, gray, width, height);
     return err;
+}
+
+esp_err_t crop_face(float cx, float cy, float size, uint8_t* rgb, int out) {
+    esp_jpeg_image_output_t img = {};
+    if (s_last_len == 0) return ESP_ERR_INVALID_STATE;
+    if (esp_err_t err = decode(s_last, s_last_len, 0, &img); err != ESP_OK) return err;
+    // Same centre square as capture(), then the crop inside it.
+    const int side = std::min<int>(img.width, img.height);
+    const float x0 = (img.width - side) / 2 + (cx - size / 2) * side;
+    const float y0 = (img.height - side) / 2 + (cy - size / 2) * side;
+    const float step = size * side / out;
+    for (int oy = 0; oy < out; ++oy) {
+        for (int ox = 0; ox < out; ++ox) {
+            // Average the source pixels under this output pixel (edges are clamped).
+            const int sx0 = int(x0 + ox * step), sy0 = int(y0 + oy * step);
+            const int sx1 = std::max(sx0 + 1, int(x0 + (ox + 1) * step));
+            const int sy1 = std::max(sy0 + 1, int(y0 + (oy + 1) * step));
+            uint32_t sum[3] = {0, 0, 0}, n = 0;
+            for (int y = sy0; y < sy1; ++y) {
+                const int yy = std::clamp<int>(y, 0, img.height - 1);
+                for (int x = sx0; x < sx1; ++x, ++n) {
+                    const uint8_t* p = s_rgb + (yy * img.width + std::clamp<int>(x, 0, img.width - 1)) * 3;
+                    sum[0] += p[0], sum[1] += p[1], sum[2] += p[2];
+                }
+            }
+            for (int c = 0; c < 3; ++c) rgb[(oy * out + ox) * 3 + c] = sum[c] / n;
+        }
+    }
+    return ESP_OK;
 }
 
 size_t latest_jpeg(uint8_t* dst, size_t capacity) {

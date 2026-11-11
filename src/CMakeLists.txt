@@ -1,2 +1,2 @@
 idf_component_register(SRCS "main.cpp"
-                       REQUIRES lte camera inference preview esp_timer)
+                       REQUIRES lte camera inference people preview esp_timer)

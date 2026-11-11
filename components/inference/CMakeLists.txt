@@ -17,17 +17,31 @@ RECURSIVE_FIND_FILE_EXCLUDE_DIR(MODEL   "${EI}/tflite-model" "CMSIS" "*.cpp")
 RECURSIVE_FIND_FILE_EXCLUDE_DIR(ESP_NN  "${SDK}/porting/espressif/ESP-NN" "CMSIS" "*.S")
 RECURSIVE_FIND_FILE_EXCLUDE_DIR(ESP_DSP "${SDK}/porting/espressif/esp-dsp/modules/fft" "CMSIS" "*.S")
 
+# Optional second model: face recognition, an Edge Impulse "Bring your own model" export in ./ei-face-id.
+# Only its .tflite file and generated operator list are used; the SDK above runs it.
+file(GLOB FACE_ID_TFLITE "${CMAKE_CURRENT_LIST_DIR}/ei-face-id/tflite-model/*.tflite")
+
 idf_component_register(
-    SRCS "inference.cpp" ${SDK_CPP} ${SDK_CC} ${SDK_C} ${MODEL} ${ESP_NN} ${ESP_DSP}
+    SRCS "inference.cpp" "face_id.cpp" "fast_prelu.cpp" ${SDK_CPP} ${SDK_CC} ${SDK_C} ${MODEL} ${ESP_NN} ${ESP_DSP}
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "ei" "ei/tflite-model" "ei/model-parameters" "ei/edge-impulse-sdk"
                       "ei/edge-impulse-sdk/porting/espressif/esp-dsp/modules/fft/include"
                       "ei/edge-impulse-sdk/porting/espressif/esp-dsp/modules/common/include"
+                      "ei-face-id/tflite-model"
     PRIV_REQUIRES esp_timer heap)
 
 # Turn on the ESP32-S3 optimised kernels (the .S files check these, so they must be compiler flags).
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     EI_CLASSIFIER_TFLITE_ENABLE_ESP_NN=1 EI_CLASSIFIER_TFLITE_ENABLE_ESP_NN_S3=1 EIDSP_USE_ESP_DSP=1)
+if(FACE_ID_TFLITE)
+    list(GET FACE_ID_TFLITE 0 FACE_ID_TFLITE)
+    message(STATUS "Face recognition model: ${FACE_ID_TFLITE}")
+    target_include_directories(${COMPONENT_LIB} BEFORE PRIVATE all-ops)  # see all-ops/tflite-model/
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE FACE_ID_MODEL=1 "FACE_ID_TFLITE=\"${FACE_ID_TFLITE}\"")
+    set_source_files_properties(face_id.cpp PROPERTIES OBJECT_DEPENDS "${FACE_ID_TFLITE}")
+else()
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE FACE_ID_MODEL=0)
+endif()
 # The SDK is third-party code: silence its warnings (same list as the official example).
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-unused-variable -Wno-maybe-uninitialized -Wno-error=format= -Wno-unused-but-set-parameter

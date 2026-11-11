@@ -4,6 +4,7 @@
 #include "edge-impulse-sdk/classifier/ei_run_classifier.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "face_id.hpp"
 #include "test_images.h"
 
 static const char* TAG = "inference";
@@ -72,6 +73,23 @@ void self_test() {
         const Result r = run(p.pixels);
         ESP_LOGI(TAG, "self-test %-21s %s  (%d faces, best %.2f, %d ms)", p.name,
                  r.ok && r.face == p.has_face ? "PASS" : "FAIL", r.count, r.confidence, r.time_ms);
+    }
+
+    // Face recognition: Eileen Collins must match another photo of herself, and nobody else.
+    if (!face_id::available()) return;
+    static float collins[face_id::kDims], other[face_id::kDims];
+    face_id::embed(testimg::face_collins_a, collins);
+    struct Face { const char* name; const uint8_t* rgb; bool same; };
+    const Face faces[] = {
+        {"Eileen Collins (other photo)", testimg::face_collins_b, true},
+        {"Neil Armstrong", testimg::face_armstrong, false},
+        {"Sally Ride", testimg::face_ride, false},
+    };
+    for (const auto& f : faces) {
+        const int ms = face_id::embed(f.rgb, other);
+        const float sim = face_id::similarity(collins, other);
+        const bool pass = ms >= 0 && (sim >= face_id::kMatch) == f.same;
+        ESP_LOGI(TAG, "self-test %-28s %s  (similarity to Collins %.2f, %d ms)", f.name, pass ? "PASS" : "FAIL", sim, ms);
     }
 }
 

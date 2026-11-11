@@ -1,8 +1,14 @@
-"""Make components/inference/test_images.h: three public-domain/CC0 photos as 96x96 grayscale.
+"""Make components/inference/test_images.h: built-in test photos for the boot self-test.
 
-Usage: python3 tools/make_test_images.py <dir with astronaut.png and coffee.png> components/inference/test_images.h
-The images come from scikit-image 0.19.3 (skimage/data). They are processed the same way as camera frames:
-centre crop to a square, box downscale, BT.601 luma.
+Usage: python3 tools/make_test_images.py <photo dir> components/inference/test_images.h
+
+Face detection: three photos as 96x96 grayscale, processed like camera frames (centre crop to a
+square, box downscale, BT.601 luma). astronaut.png and coffee.png from scikit-image 0.19.3 (skimage/data).
+
+Face recognition: four face crops as 96x96 RGB. Public-domain NASA portraits from Wikimedia Commons:
+  astronaut.png (Eileen Collins), collins3.jpg = "Eileen Collins, early NASA portrait.jpg",
+  armstrong.jpg = "Neil Armstrong pose.jpg", ride.jpg = "Sally Ride (1984).jpg" (960 px wide versions).
+The crop boxes were found once with OpenCV's YuNet face detector (1.4x the face box).
 """
 import sys
 from PIL import Image
@@ -20,6 +26,15 @@ imgs = {
   'astronaut_face': gray96(f'{d}/astronaut.png', (100, 0, 356, 256)),
   'coffee':         gray96(f'{d}/coffee.png'),
 }
+def rgb96(path, box):
+    im = Image.open(path).convert('RGB').crop(box).resize((96, 96), Image.BOX)
+    return list(im.tobytes())
+faces = {
+  'face_collins_a':  rgb96(f'{d}/astronaut.png', (160, 56, 284, 180)),
+  'face_collins_b':  rgb96(f'{d}/collins3.jpg', (302, 157, 549, 404)),
+  'face_armstrong':  rgb96(f'{d}/armstrong.jpg', (482, 224, 694, 436)),
+  'face_ride':       rgb96(f'{d}/ride.jpg', (327, 246, 660, 579)),
+}
 for k, px in imgs.items():
     Image.frombytes('L', (96, 96), bytes(px)).resize((288, 288), Image.NEAREST).save(f'{d}/preview_{k}.png')
 with open(sys.argv[2], 'w') as f:
@@ -29,5 +44,10 @@ with open(sys.argv[2], 'w') as f:
     for k, px in imgs.items():
         f.write(f'alignas(16) static const uint8_t {k}[96 * 96] = {{\n')
         for i in range(0, len(px), 32): f.write('  ' + ','.join(map(str, px[i:i+32])) + ',\n')
+        f.write('};\n')
+    f.write('// Face crops for face_id, 96x96 RGB. NASA portraits (public domain), see tools/make_test_images.py.\n')
+    for k, px in faces.items():
+        f.write(f'alignas(16) static const uint8_t {k}[96 * 96 * 3] = {{\n')
+        for i in range(0, len(px), 48): f.write('  ' + ','.join(map(str, px[i:i+48])) + ',\n')
         f.write('};\n')
     f.write('}  // namespace testimg\n')
