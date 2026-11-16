@@ -14,3 +14,6 @@ components/inference/ei/*
 components/inference/ei-face-id/
 !components/inference/ei/.gitkeep
 .playwright-mcp/
+
+# Training images downloaded from the preview page (faces: keep out of git)
+f1-images-*.zip
