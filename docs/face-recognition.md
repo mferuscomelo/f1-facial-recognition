@@ -1,8 +1,8 @@
 # Face recognition: who is it?
 
 The face finder (FOMO) tells *where* a face is. A second Edge Impulse model tells *who* it is.
-You register people from your phone on the live preview page. There is no retraining and no cloud,
-and the F1 keeps the list in its own flash.
+Both models come with the firmware. You teach the F1 new people from your phone on the live preview page:
+it learns them on the board, with no cloud and no Edge Impulse account, and keeps the list in its own flash.
 
 ![Live view on a phone](images/preview-phone.png)
 
@@ -18,8 +18,9 @@ The photo is a public-domain NASA portrait of Eileen Collins.*
 4. The F1 compares it with the fingerprints of everyone registered. If the best match scores at least
    **0.45** (`face_id::kMatch`), that's who it is; otherwise "unknown".
 
-Registering someone takes 5 pictures and stores their average fingerprint, so no model is trained on the
-device or in the cloud. Adding a person takes about 15 seconds.
+Registering someone is the F1's on-board training: it takes 5 pictures, computes their fingerprints and
+stores the average. The model itself stays the same, so learning a new person takes about 15 seconds and
+never needs a computer.
 
 Recognition runs when a face appears and then every 10 s while it stays, and only once somebody is registered.
 LTE events then carry the name:
@@ -28,50 +29,7 @@ LTE events then carry the name:
 {"device":"f1","event":"face","name":"Eileen Collins","similarity":0.63,"confidence":0.87,"faces":1,"inference_ms":161,"uptime_s":33,"csq":26}
 ```
 
-## 1. Bring the model into Edge Impulse
-
-Edge Impulse's **Bring your own model** (BYOM) takes a model trained elsewhere, profiles it for your device and
-exports it as the same kind of C++ library as a model trained in Studio. It works on the free plan.
-
-The model is NXP's int8 [MobileFaceNet](https://huggingface.co/nxp/mobilefacenet-imx) (Apache-2.0, 1 MB,
-96x96 colour input, 256-number output). Download `mobilefacenet_96_96.tflite` from
-`assets/quantized_tflite_model_mcu/` in that repository.
-
-1. Create a new project and choose **Upload your model** on the dashboard.
-2. Upload `mobilefacenet_96_96.tflite`. Under *Model performance* pick a device for profiling
-   (ESP-EYE is the closest ESP32 in the list).
-3. Set the model settings and click **Save model**:
-
-| Setting | Value |
-|---|---|
-| Model input | **Image** |
-| How is your input scaled? | **Pixels ranging 0..255 (not normalized)** (the model normalises inside) |
-| Model output | **Freeform** (a fingerprint is neither a class nor a box) |
-
-![BYOM model settings](images/ei-byom-model.png)
-
-*Edge Impulse profiles the model right away: 1.1 MB flash and 753 KB RAM. Its 32 s time estimate is for the original
-ESP32 without vector instructions. The F1's ESP32-S3 with ESP-NN does it in 2.4 s.*
-
-## 2. Export it
-
-Open **Deployment**, choose **C++ library** and **Build**. On the free plan an uploaded model runs on
-**TensorFlow Lite** (the EON Compiler is for models trained in Studio). That's fine: the F1 has the PSRAM for it.
-
-![BYOM deployment](images/ei-byom-deployment.png)
-
-Unzip the export into `components/inference/ei-face-id/`, next to the face finder in `ei/`:
-
-```
-components/inference/
-├── ei/            face finder (FOMO), trained in Edge Impulse
-└── ei-face-id/    face recognition (MobileFaceNet), brought into Edge Impulse
-```
-
-Build and flash as usual. The build log says `Face recognition model: .../tflite_learn_*.tflite`. Without
-`ei-face-id/`, the firmware builds as a plain face detector.
-
-## 3. Check it on the board
+## 1. Check it on the board
 
 At boot the F1 tests the model on public-domain NASA portraits. Eileen Collins must match another photo of herself,
 and nobody else:
@@ -82,9 +40,9 @@ I (9908) inference: self-test Neil Armstrong               PASS  (similarity to 
 I (12286) inference: self-test Sally Ride                   PASS  (similarity to Collins 0.26, 2361 ms)
 ```
 
-## 4. Register people
+## 2. Register people
 
-Turn on the [live preview](deploy-to-f1.md#6-optional-live-preview-on-your-phone), join the F1's Wi-Fi, open
+Turn on the [live preview](deploy-to-f1.md#5-live-preview-on-your-phone), join the F1's Wi-Fi, open
 `http://192.168.4.1`, type a name and press **Register**. Stand alone, about 50 cm from the webcam, in good light,
 and move your head a little between the 5 pictures. Registering the same name again adds more pictures to that person.
 **Rename** and **Delete** are next to each name.
@@ -94,6 +52,13 @@ and move your head a little between the 5 pictures. Registering the same name ag
 | Cyan | Someone you registered |
 | Magenta | A face, unknown or not checked yet |
 
+## 3. Start over
+
+Flashing the board (`pio run -t upload`) erases the whole flash first, so the F1 forgets everyone it has learned.
+Firmware flashed some other way does the same: on its first boot, a new firmware wipes the list
+(`people: new firmware: forgetting all registered people` in the log). To remove one person without flashing,
+use **Delete** on the page.
+
 ## Good to know
 
 - **Distance matters.** FOMO finds face centres, not sizes, so the F1 always cuts out the same square (half the image
@@ -102,5 +67,8 @@ and move your head a little between the 5 pictures. Registering the same name ag
 - **Accuracy.** On 30 people from the LFW benchmark, 88 to 90 of 90 test photos were matched to the right person.
   That's good enough for a demo or a welcome screen, but **not for security** (a photo can fool it).
 - **Privacy.** Fingerprints are biometric data. They stay in the F1's `people` flash partition and never go over LTE,
-  only the name does. `Delete` removes them.
+  only the name does. **Delete** removes them, and flashing the board removes all of them.
+- **The model.** NXP's int8 [MobileFaceNet](https://huggingface.co/nxp/mobilefacenet-imx), brought into Edge Impulse
+  with *Bring your own model* and exported as a C++ library. The project is public:
+  [F1 face recognition - MobileFaceNet](https://studio.edgeimpulse.com/public/1161859/latest). See also [How it works](how-it-works.md#where-the-models-come-from).
 - **Licences.** MobileFaceNet: Apache-2.0 (NXP) / MIT (original). Test portraits: NASA, public domain.

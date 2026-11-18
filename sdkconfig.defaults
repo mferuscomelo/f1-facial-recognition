@@ -11,8 +11,6 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_BOOTLOADER_VDDSDIO_BOOST_1_9V=y
-# Firmware updates from the web page: if a new firmware never confirms it works, go back to the old one
-CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # PSRAM: 8 MB, quad SPI @ 80 MHz (holds camera frames and the AI model's working memory)
 CONFIG_SPIRAM=y

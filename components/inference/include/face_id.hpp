@@ -4,14 +4,11 @@
 // Face recognition: turns a face picture into a "fingerprint" (embedding), a list of numbers
 // that is close to the fingerprint of another picture of the same person.
 // Model: MobileFaceNet, brought into Edge Impulse with "Bring your own model" and exported as a
-// C++ library into components/inference/ei-face-id/ (see docs/face-recognition.md).
+// C++ library; its .tflite is in components/inference/ei-face-id/ (see docs/face-recognition.md).
 namespace face_id {
 
 constexpr int kSize = 96;   // the model looks at a 96x96 colour picture of one face
 constexpr int kDims = 256;  // numbers in one fingerprint
-
-// False if the firmware was built without the face recognition model.
-bool available();
 
 // `rgb` is a kSize x kSize picture, 3 bytes per pixel (R, G, B), centred on one face.
 // Writes a fingerprint of length 1 into `out` (so similarity is a dot product).

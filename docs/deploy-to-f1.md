@@ -23,28 +23,17 @@
 git clone <this repository> && cd f1-facial-recognition
 ```
 
-## 2. Add your Edge Impulse model
+Both models are included in `components/inference/`: the face finder in `ei/` and the face recogniser in
+`ei-face-id/`. There is nothing to train or download.
 
-Unzip the C++ library export from [Train your model](train-your-model.md) into `components/inference/ei/`, so you get:
-
-```
-components/inference/ei/
-├── edge-impulse-sdk/
-├── model-parameters/
-└── tflite-model/
-```
-
-No code changes are needed. The firmware reads the input size and labels from `model-parameters/`.
-
-Optional: a second export, the face recognition model, goes into `components/inference/ei-face-id/`.
-See [Face recognition](face-recognition.md).
-
-## 3. Choose where events go
+## 2. Choose where events go
 
 1. Open [webhook.site](https://webhook.site). It shows you a unique URL, and keep the page open.
-2. Create the file `sdkconfig.defaults.local` in the project folder (git ignores it):
+2. Create the file `sdkconfig.defaults.local` in the project folder (git ignores it). Set your own
+   Wi-Fi password for the [live preview](#5-live-preview-on-your-phone) here too (at least 8 characters):
    ```
    CONFIG_APP_PUBLISH_URL="http://webhook.site/<your-id>"
+   CONFIG_APP_PREVIEW_PASSWORD="choose-a-password"
    ```
    Use `http://`. This demo keeps things simple and doesn't use TLS.
 
@@ -53,7 +42,7 @@ A free webhook.site URL accepts about 100 requests. The F1 sends a heartbeat eve
 
 Other settings (APN, heartbeat period) are under **F1 FaceCam** in `pio run -t menuconfig`.
 
-## 4. Build and flash
+## 3. Build and flash
 
 Connect the **top** USB-C port (J201) to your computer:
 
@@ -63,11 +52,14 @@ pio run -t upload -t monitor
 
 The first build takes a few minutes, and later builds are much quicker. Leave with `Ctrl+C`.
 
+Every upload **erases the whole flash** first (see `tools/erase_on_upload.py`), so the F1 starts from scratch:
+registered people and Wi-Fi data are gone. Firmware flashed with another tool wipes them on its first boot.
+
 > After changing `sdkconfig.defaults.local`, delete `sdkconfig.f1` so the new value is picked up.
 
-## 5. What you should see
+## 4. What you should see
 
-The board first checks the model on three built-in photos, then starts the camera, then goes online:
+The board first checks both models on built-in photos, then starts the camera, then goes online:
 
 ```
 I (1414) inference: model 'F1 face detection - FOMO' (Edge Impulse project 1161327), input 96x96
@@ -97,16 +89,13 @@ Look into the camera from 30 to 50 cm away, in good light. After two frames that
 
 When you leave, a `no_face` event follows. Events are sent at most once every 10 s.
 
-## 6. Optional: live preview on your phone
+## 5. Live preview on your phone
 
-Add to `sdkconfig.defaults.local` (choose your own password, at least 8 characters):
+The preview is on by default; you need it to register people. Its Wi-Fi password is the one you set in step 2,
+or `f1-facecam` if you didn't. To turn it off, add `CONFIG_APP_PREVIEW=n` to `sdkconfig.defaults.local`.
+After changing that file, delete `sdkconfig.f1` and flash again.
 
-```
-CONFIG_APP_PREVIEW=y
-CONFIG_APP_PREVIEW_PASSWORD="choose-a-password"
-```
-
-Delete `sdkconfig.f1`, flash again, and look for:
+At boot, look for:
 
 ```
 I (1727) preview: join Wi-Fi "F1-FaceCam" and open http://192.168.4.1
@@ -114,46 +103,25 @@ I (1727) preview: join Wi-Fi "F1-FaceCam" and open http://192.168.4.1
 
 Join the Wi-Fi network **F1-FaceCam** with your phone or laptop and open **http://192.168.4.1**. You see the
 camera image, a dashed square (the part the model looks at) and a box on every face it finds, with the name if you
-[registered that person](face-recognition.md#4-register-people). Phones may warn that the network has no internet;
+[registered that person](face-recognition.md#2-register-people). Phones may warn that the network has no internet;
 stay connected anyway.
 
 The preview runs next to LTE. Both work at the same time, because Wi-Fi uses the ESP32-S3's radio and LTE uses the modem.
 
-The same page has two more tools, below.
-
-## 7. Collect training images
-
-Under **Collect training images**, type a label (for example `desk` or your name), pick a rate and press **Start**.
-Your browser keeps the camera frames; the F1 stores nothing. **Download .zip** gives you the images plus an
-`info.labels` file with the F1's own face boxes and a training/testing split.
-
-In your Edge Impulse face project, open **Data acquisition → Add data → Upload data**, select all unzipped files
-(including `info.labels`) and upload. Check the boxes, fix the ones that are off, and retrain.
-Frames with nobody in them come in with no boxes: that's how the model learns what is *not* a face.
-
-## 8. Update the firmware over Wi-Fi
-
-After the first USB flash, new firmware (for example with a retrained model) can go over Wi-Fi:
-
-1. Put the new export in place and run `pio run`.
-2. On the preview page, under **Firmware**, choose `.pio/build/f1/firmware.bin` and press **Update**.
-3. The F1 writes it into its second firmware slot, checks it and restarts. The page shows the new version.
-
-If the new firmware crashes before its boot self-test is done, the F1 goes back to the previous one by itself.
-Registered people are kept: they live in their own flash partition.
+Below the image is the list of people the F1 knows, where you [register](face-recognition.md#2-register-people),
+rename and delete them.
 
 ## Troubleshooting
 
 | Symptom | What to try |
 |---|---|
-| Build stops with *No Edge Impulse model* | The export isn't in `components/inference/ei/` (step 2). |
-| Self-test says FAIL for the astronaut photos | The model doesn't find faces at all. Check you exported the right project, and retrain. |
-| `coffee cup FAIL` | Known: the public dataset has no "not a face" examples. See [Make it better](train-your-model.md#make-it-better). |
+| Self-test says FAIL for the astronaut photos | The model doesn't find faces at all. Run `git status` to check `components/inference/` is unchanged, then build and flash again. |
+| `coffee cup FAIL` | Known: the face finder takes the shiny spoon for a face. Its training photos are all faces, with no "not a face" examples. |
 | No `camera streaming` line | Replug the webcam on **J202**. The camera must offer MJPEG at 640x480 or less over USB Full-Speed. |
 | `brightness` below about 20 | Too dark, or the lens is covered. |
 | Stays blue | The first attach can take a few minutes. Check that you have LTE-M coverage, and the APN (`iot.1nce.net` for the kit's SIM). |
 | `POST failed` | Open your URL in a browser. When the free webhook.site inbox is full, it rejects requests. |
 | Preview page doesn't load | Check the log for `preview:`. The password needs at least 8 characters. Use `http://`, not `https://`. |
 | Name shows "unknown" for a registered person | Stand at the distance you registered from, in similar light, or register again to add pictures. |
-| `Update failed` on the page | Upload `firmware.bin` (not `bootloader.bin` or the `.elf`), and stay on the F1's Wi-Fi until it restarts. |
+| Registered people are gone | Expected after flashing: every upload erases the board. Register them again. |
 | `Please check pull-up resistances` or `Rx Break` warnings | Harmless: the board has external I2C pull-ups, and the modem's UART line glitches while it resets. |

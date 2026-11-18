@@ -1,4 +1,4 @@
-// Runs the face recognition model (Edge Impulse "Bring your own model" export) with
+// Runs the face recognition model (MobileFaceNet, an Edge Impulse "Bring your own model" export) with
 // TensorFlow Lite Micro from the Edge Impulse SDK.
 //
 // Why not run_classifier()? One firmware can only hold one Edge Impulse "impulse" with that API,
@@ -14,14 +14,6 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#if !FACE_ID_MODEL
-namespace face_id {
-bool available() { return false; }
-int embed(const uint8_t*, float*) { return -1; }
-float similarity(const float*, const float*) { return 0; }
-}  // namespace face_id
-#else
 
 #include "edge-impulse-sdk/tensorflow/lite/micro/micro_interpreter.h"
 #include "edge-impulse-sdk/tensorflow/lite/micro/micro_mutable_op_resolver.h"
@@ -81,8 +73,6 @@ bool init() {
 }
 }  // namespace
 
-bool available() { return true; }
-
 int embed(const uint8_t* rgb, float* out) {
     if (!init()) return -1;
     TfLiteTensor* in = s_interpreter->input(0);
@@ -119,4 +109,3 @@ float similarity(const float* a, const float* b) {
 }
 
 }  // namespace face_id
-#endif

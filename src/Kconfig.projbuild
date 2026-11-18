@@ -19,13 +19,12 @@ config APP_HEARTBEAT_PERIOD_S
 
 config APP_PREVIEW
     bool "Live preview over Wi-Fi"
-    default n
+    default y
     help
         The F1 opens its own Wi-Fi network. Join it with a phone or laptop and open
-        http://192.168.4.1 to see the camera with the detected faces, register people,
-        collect training images and install new firmware.
-        Off by default: with it on, camera images are sent to the browser that asks for them,
-        and anyone with the Wi-Fi password can change people and firmware.
+        http://192.168.4.1 to see the camera with the detected faces and register people.
+        Camera images are sent to the browser that asks for them, and anyone with the
+        Wi-Fi password can change the registered people: change the default password.
 
 config APP_PREVIEW_SSID
     string "Wi-Fi network name"
@@ -34,9 +33,10 @@ config APP_PREVIEW_SSID
 
 config APP_PREVIEW_PASSWORD
     string "Wi-Fi password (at least 8 characters)"
-    default ""
+    default "f1-facecam"
     depends on APP_PREVIEW
     help
-        Put it in sdkconfig.defaults.local so it stays out of git.
+        The default is printed in the README for everyone: set your own in
+        sdkconfig.defaults.local so it stays out of git.
 
 endmenu

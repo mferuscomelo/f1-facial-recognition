@@ -76,7 +76,6 @@ void self_test() {
     }
 
     // Face recognition: Eileen Collins must match another photo of herself, and nobody else.
-    if (!face_id::available()) return;
     static float collins[face_id::kDims], other[face_id::kDims];
     face_id::embed(testimg::face_collins_a, collins);
     struct Face { const char* name; const uint8_t* rgb; bool same; };

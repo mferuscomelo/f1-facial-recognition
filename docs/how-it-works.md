@@ -16,7 +16,7 @@ flowchart TB
         sup["lte task<br/>attach, CMUX, reconnect"]
     end
     app --> q
-    app -.->|optional| web["Wi-Fi access point<br/>live view, people, images, updates"]
+    app -.->|optional| web["Wi-Fi access point<br/>live view, register people"]
 ```
 
 The ESP32-S3 has two cores. The camera and model run on one, so the cellular link on the other never waits for them.
@@ -36,20 +36,23 @@ The ESP32-S3 has two cores. The camera and model run on one, so the cellular lin
 - `inference::run()` hands the 96x96 image to Edge Impulse's `run_classifier()` and returns the best face's
   score and position.
 - The SDK reads pixels as packed `0xRRGGBB` values. With R = G = B it calculates exactly our gray value again.
-- [CMakeLists.txt](../components/inference/CMakeLists.txt) builds the exported library with **ESP-NN**,
+- [CMakeLists.txt](../components/inference/CMakeLists.txt) builds the Edge Impulse export in `ei/` with **ESP-NN**,
   Espressif's neural-network kernels that use the S3's vector instructions.
 - `self_test()` runs the models on built-in photos at boot ([tools/make_test_images.py](../tools/make_test_images.py)),
   so a model problem shows up before any camera is plugged in.
 
 ## 3. Recognition: [face_id.cpp](../components/inference/face_id.cpp) and [components/people](../components/people/people.cpp)
 
-- The second model, MobileFaceNet, came into Edge Impulse through **Bring your own model** ([guide](face-recognition.md)).
-  Its export goes into `ei-face-id/`; the build links its `.tflite` file into the firmware and reuses the SDK of the
-  first export.
+- The second model, MobileFaceNet, is in `ei-face-id/`. The build links its `.tflite` file into the firmware and
+  reuses the SDK of the first export.
 - One firmware can only hold one `run_classifier()` model, so `face_id.cpp` gives this one straight to the SDK's
   TensorFlow Lite Micro interpreter, with the operator list Edge Impulse generated for it.
 - `camera::crop_face()` decodes the same frame again at full size and cuts out a square around the face centre.
 - `people` keeps names and fingerprints in RAM and in the `people` flash partition. Matching is a dot product per person.
+- Learning a person is on-board training without changing the model: average the fingerprints of 5 pictures.
+- The partition also stores the ELF hash of the firmware that wrote it. A different firmware wipes it on first boot,
+  so a newly flashed F1 always starts empty, whatever tool flashed it. `pio run -t upload` erases the whole chip anyway
+  ([tools/erase_on_upload.py](../tools/erase_on_upload.py)).
 
 ## 4. LTE-M: [components/lte](../components/lte/lte.cpp)
 
@@ -82,12 +85,6 @@ The ESP32-S3 has two cores. The camera and model run on one, so the cellular lin
 - FOMO finds face *centres*, so the page draws a fixed-size square around each one: the same square the F1 cuts
   out for recognition.
 - `/people/...` lists, registers, renames and deletes people.
-- **Collect training images** runs in the browser: it keeps the frames it already receives and zips them with an
-  Edge Impulse `info.labels` file (labels, boxes, training/testing split). The zip is built by ~30 lines of JavaScript,
-  because the phone has no internet on the F1's network to load a library.
-- **Firmware update** ([update.cpp](../components/preview/update.cpp)): `POST /update` streams `firmware.bin` into
-  the spare slot of the flash (`partitions.csv` has two 4 MB slots), checks it and restarts. The new firmware confirms
-  itself after its boot self-test; if it never gets there, the bootloader goes back to the old one.
 
 ## F1-specific details worth knowing
 
@@ -104,11 +101,29 @@ These took real debugging on the board. They are all in the code, with comments.
 | **APN** | The kit's 1NCE SIM attaches with `iot.1nce.net`. |
 | **Modem power** | GM02S power and reset are pins P1 and P3 of a PCAL6408A expander at I2C address 0x21, not ESP32 GPIOs ([pin map](pinmap.md)). |
 
+## Where the models come from
+
+Both models are Edge Impulse C++ library exports, checked into [components/inference](../components/inference/).
+You don't need Edge Impulse to build or use this project; this is how they were made. Both projects are public:
+open them to look at the data, the impulse and the results, or click **Clone this project** to experiment.
+
+| | Face finder | Face recogniser |
+|---|---|---|
+| Edge Impulse project | [F1 face detection - FOMO](https://studio.edgeimpulse.com/public/1161327/latest) | [F1 face recognition - MobileFaceNet](https://studio.edgeimpulse.com/public/1161859/latest) |
+| Folder | `ei/` (whole export, with the SDK) | `ei-face-id/tflite-model/` (only the model) |
+| Model | FOMO MobileNetV2 0.35, 96x96 grayscale, int8, EON Compiler | NXP's int8 [MobileFaceNet](https://huggingface.co/nxp/mobilefacenet-imx), 96x96 colour in, 256 numbers out |
+| How | Trained in Edge Impulse Studio on a clone of the public [Face detection - FOMO](https://studio.edgeimpulse.com/public/87291/latest) project (70 cycles, learning rate 0.001, augmentation on) | Imported with **Bring your own model** (input: image, pixels 0..255; output: freeform), runs on TensorFlow Lite Micro |
+| Size | 29 KB flash, 146 KB RAM | 1.1 MB flash, 686 KB RAM |
+
+> **What is FOMO?** *Faster Objects, More Objects* is Edge Impulse's object detection model for microcontrollers.
+> It doesn't draw full bounding boxes. It finds the *centre* of each object on a coarse grid, which makes it
+> tiny and fast enough for the ESP32-S3.
+
 ## Where to go next
 
 - **A finder that knows face sizes:** FOMO gives centres only, so recognition uses a fixed crop. A detector with real
   boxes (and eye positions to straighten the face) would make recognition work at any distance.
 - **Faster recognition:** the remaining time is mostly convolutions on PSRAM data; a smaller input or a pruned model
-  in Edge Impulse would help.
+  would help.
 - **Secure transport:** switch `http://` to `https://` (the ESP-IDF HTTP client supports TLS), or use MQTT.
 - **Run on battery:** the F1 has a fuel gauge and LTE-M power saving (PSM), so the modem can sleep between events.

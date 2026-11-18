@@ -1,11 +1,15 @@
 // Known people, kept in RAM and saved to the "people" flash partition (NVS).
 // Each person is one NVS entry "p<id>" holding a Person record.
+//
+// Flashing new firmware starts from scratch: the partition remembers which firmware wrote it,
+// and a different firmware wipes it (and the Wi-Fi settings in "nvs") on its first boot.
 #include "people.hpp"
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
+#include "esp_app_desc.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "face_id.hpp"
@@ -44,6 +48,23 @@ esp_err_t save(int id) {
     return err == ESP_OK ? nvs_commit(s_nvs) : err;
 }
 
+// Wipes everything the F1 has learned if this firmware is not the one that wrote it.
+esp_err_t reset_if_new_firmware() {
+    uint8_t running[32], stored[32];
+    size_t len = sizeof(stored);
+    memcpy(running, esp_app_get_description()->app_elf_sha256, sizeof(running));
+    if (nvs_get_blob(s_nvs, "firmware", stored, &len) == ESP_OK && len == sizeof(stored) &&
+        memcmp(stored, running, sizeof(running)) == 0) return ESP_OK;
+    ESP_LOGW(TAG, "new firmware: forgetting all registered people");
+    nvs_close(s_nvs);
+    nvs_flash_erase_partition(kPartition);
+    nvs_flash_erase();  // the default "nvs" partition (Wi-Fi data)
+    esp_err_t err = nvs_flash_init_partition(kPartition);
+    if (err == ESP_OK) err = nvs_open_from_partition(kPartition, "people", NVS_READWRITE, &s_nvs);
+    if (err == ESP_OK) err = nvs_set_blob(s_nvs, "firmware", running, sizeof(running));
+    return err == ESP_OK ? nvs_commit(s_nvs) : err;
+}
+
 int find(const char* name) {
     for (int i = 0; i < kMax; ++i)
         if (s_people[i].name[0] && strcasecmp(s_people[i].name, name) == 0) return i;
@@ -61,6 +82,7 @@ esp_err_t start() {
         err = nvs_flash_init_partition(kPartition);
     }
     if (err == ESP_OK) err = nvs_open_from_partition(kPartition, "people", NVS_READWRITE, &s_nvs);
+    if (err == ESP_OK) err = reset_if_new_firmware();
     if (err != ESP_OK) return err;
     for (int i = 0; i < kMax; ++i) {
         char key[8];

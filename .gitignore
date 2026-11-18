@@ -8,12 +8,11 @@ dependencies.lock
 .remember/
 backup/
 .claude/
-
-# Edge Impulse model export (see docs/deploy-to-f1.md)
-components/inference/ei/*
-components/inference/ei-face-id/
-!components/inference/ei/.gitkeep
 .playwright-mcp/
 
-# Training images downloaded from the preview page (faces: keep out of git)
+# Face recognition export: only its model is used (the SDK in ei/ runs it)
+components/inference/ei-face-id/*
+!components/inference/ei-face-id/tflite-model/
+
+# Face photos exported by older firmware (keep out of git)
 f1-images-*.zip

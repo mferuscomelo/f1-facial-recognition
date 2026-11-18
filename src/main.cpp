@@ -12,7 +12,6 @@
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_ota_ops.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "face_id.hpp"
@@ -101,9 +100,6 @@ static void enroll_step(const inference::Result& r, const char* name, float* fp)
 
 static void ai_task(void*) {
     inference::self_test();  // known photos first: proves the models work before the camera does
-    // This firmware runs: if it came from a web-page update, keep it (otherwise the bootloader
-    // would go back to the previous firmware on the next restart).
-    esp_ota_mark_app_valid_cancel_rollback();
 
     const int w = inference::input_width(), h = inference::input_height();
     auto* frame = static_cast<uint8_t*>(heap_caps_malloc(w * h, MALLOC_CAP_SPIRAM));
@@ -125,14 +121,14 @@ static void ai_task(void*) {
 
         // Registering someone (asked for on the web page)?
         char enrolling[people::kNameLen];
-        if (face_id::available() && people::enroll_active(enrolling)) {
+        if (people::enroll_active(enrolling)) {
             enroll_step(r, enrolling, fp);
             continue;
         }
 
         // Who is it? Only worth the time if somebody is registered.
         const int64_t now = esp_timer_get_time();
-        if (r.face && face_id::available() && people::count() > 0 &&
+        if (r.face && people::count() > 0 &&
             (who_checked_us == 0 || now - who_checked_us > kRecheckUs)) {
             preview::update(r, nullptr, "Checking who it is...");
             if (fingerprint(r, fp)) who = people::identify(fp);
